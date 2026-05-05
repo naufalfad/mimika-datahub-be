@@ -1,0 +1,20 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.core import security
+
+router = APIRouter()
+
+@router.post("/login")
+def login(db: Session = Depends(get_db), form_data: OAuth2PasswordRequestForm = Depends()):
+    user = db.query(models.User).filter(models.User.username == form_data.username).first()
+    if not user or not security.verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Username atau password salah")
+    
+    return {
+        "access_token": security.create_access_token(user.username),
+        "token_type": "bearer",
+        "role": user.role
+    }
