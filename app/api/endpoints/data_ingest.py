@@ -11,8 +11,10 @@ router = APIRouter()
 @router.post("/upload-process", response_model=schemas.UploadResponse)
 async def upload_and_process_form(
     title: str = Form(...),
+    dataset_type: str = Form(...),
     source_id: int = Form(...),
     category_id: int = Form(...),
+    source_type_id: int = Form(...),
     year: int = Form(...),
     period: str = Form(...),
     description: str = Form(None),
@@ -25,8 +27,10 @@ async def upload_and_process_form(
     # 1. Simpan metadata dataset
     new_dataset = models.Dataset(
         title=title,
+        dataset_type=dataset_type,
         source_id=source_id,
         category_id=category_id,
+        source_type_id=source_type_id,
         year=year,
         period=period,
         description=description,

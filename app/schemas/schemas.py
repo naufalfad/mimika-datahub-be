@@ -25,15 +25,6 @@ class SourceOut(SourceBase):
     class Config:
         from_attributes = True
 
-class DatasetTypeCreate(BaseModel):
-    name: str
-
-class DatasetTypeOut(BaseModel):
-    id: int
-    name: str
-    class Config:
-        from_attributes = True
-
 class SourceTypeCreate(BaseModel):
     name: str
 
@@ -48,8 +39,10 @@ class DatasetCreate(BaseModel):
     title: str
     source_id: int
     category_id: int
+    source_type_id: int
     year: int
     period: str
+    dataset_type: str
     description: Optional[str] = None
 
 class DatasetOut(DatasetCreate):

@@ -1,0 +1,1500 @@
+==================================================
+STRUKTUR FOLDER (DAFTAR FILE)
+==================================================
+mimika-datahub-be/.env
+mimika-datahub-be/.gitignore
+mimika-datahub-be/alembic/env.py
+mimika-datahub-be/alembic/README
+mimika-datahub-be/alembic/script.py.mako
+mimika-datahub-be/alembic/versions/892527d5c154_create_users_table_and_seed.py
+mimika-datahub-be/alembic/versions/fe395a9d2545_init.py
+mimika-datahub-be/alembic.ini
+mimika-datahub-be/app/api/api_router.py
+mimika-datahub-be/app/api/deps.py
+mimika-datahub-be/app/api/endpoints/auth.py
+mimika-datahub-be/app/api/endpoints/brida.py
+mimika-datahub-be/app/api/endpoints/categories.py
+mimika-datahub-be/app/api/endpoints/dashboard.py
+mimika-datahub-be/app/api/endpoints/data_ingest.py
+mimika-datahub-be/app/api/endpoints/data_view.py
+mimika-datahub-be/app/api/endpoints/datasets.py
+mimika-datahub-be/app/api/endpoints/sources.py
+mimika-datahub-be/app/core/security.py
+mimika-datahub-be/app/db/base.py
+mimika-datahub-be/app/db/session.py
+mimika-datahub-be/app/main.py
+mimika-datahub-be/app/models/models.py
+mimika-datahub-be/app/schemas/schemas.py
+mimika-datahub-be/app/services/cleaning_engine.py
+mimika-datahub-be/app/services/export_engine.py
+mimika-datahub-be/copy_project.py
+mimika-datahub-be/requirements.txt
+
+
+==================================================
+ISI KODE
+==================================================
+
+--- START FILE: mimika-datahub-be/.env ---
+DATABASE_URL=postgresql://postgres:admin@localhost/mimika_datahub
+--- END FILE: mimika-datahub-be/.env ---
+
+--- START FILE: mimika-datahub-be/.gitignore ---
+.env
+--- END FILE: mimika-datahub-be/.gitignore ---
+
+--- START FILE: mimika-datahub-be/alembic/env.py ---
+from logging.config import fileConfig
+
+from sqlalchemy import engine_from_config
+from sqlalchemy import pool
+
+from alembic import context
+from app.db.base import Base
+import app.models.models
+
+# this is the Alembic Config object, which provides
+# access to the values within the .ini file in use.
+config = context.config
+
+# Interpret the config file for Python logging.
+# This line sets up loggers basically.
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+# add your model's MetaData object here
+# for 'autogenerate' support
+# from myapp import mymodel
+# target_metadata = mymodel.Base.metadata
+target_metadata = Base.metadata
+
+# other values from the config, defined by the needs of env.py,
+# can be acquired:
+# my_important_option = config.get_main_option("my_important_option")
+# ... etc.
+
+
+def run_migrations_offline() -> None:
+    """Run migrations in 'offline' mode.
+
+    This configures the context with just a URL
+    and not an Engine, though an Engine is acceptable
+    here as well.  By skipping the Engine creation
+    we don't even need a DBAPI to be available.
+
+    Calls to context.execute() here emit the given string to the
+    script output.
+
+    """
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online() -> None:
+    """Run migrations in 'online' mode.
+
+    In this scenario we need to create an Engine
+    and associate a connection with the context.
+
+    """
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection, target_metadata=target_metadata
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+
+--- END FILE: mimika-datahub-be/alembic/env.py ---
+
+--- START FILE: mimika-datahub-be/alembic/README ---
+Generic single-database configuration.
+--- END FILE: mimika-datahub-be/alembic/README ---
+
+--- START FILE: mimika-datahub-be/alembic/script.py.mako ---
+"""${message}
+
+Revision ID: ${up_revision}
+Revises: ${down_revision | comma,n}
+Create Date: ${create_date}
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+${imports if imports else ""}
+
+# revision identifiers, used by Alembic.
+revision: str = ${repr(up_revision)}
+down_revision: Union[str, Sequence[str], None] = ${repr(down_revision)}
+branch_labels: Union[str, Sequence[str], None] = ${repr(branch_labels)}
+depends_on: Union[str, Sequence[str], None] = ${repr(depends_on)}
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    ${upgrades if upgrades else "pass"}
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    ${downgrades if downgrades else "pass"}
+
+--- END FILE: mimika-datahub-be/alembic/script.py.mako ---
+
+--- START FILE: mimika-datahub-be/alembic/versions/892527d5c154_create_users_table_and_seed.py ---
+"""create_users_table_and_seed
+
+Revision ID: 892527d5c154
+Revises: fe395a9d2545
+Create Date: 2026-05-05 11:20:44.459064
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+from app.core.security import get_password_hash
+import sqlalchemy as sa
+
+
+# revision identifiers, used by Alembic.
+revision: str = '892527d5c154'
+down_revision: Union[str, Sequence[str], None] = 'fe395a9d2545'
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+def upgrade() -> None:
+    # 1. Buat Tabel Users (Biasanya terisi otomatis jika pakai --autogenerate, 
+    # jika tidak, pastikan tabel dibuat dulu)
+    op.create_table('users',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('username', sa.String(), nullable=False),
+        sa.Column('hashed_password', sa.String(), nullable=False),
+        sa.Column('full_name', sa.String(), nullable=True),
+        sa.Column('role', sa.String(), nullable=True),
+        sa.Column('is_active', sa.Boolean(), nullable=True),
+        sa.PrimaryKeyConstraint('id')
+    )
+    
+    # 2. SEEDER: Masukkan User Awal
+    # Password admin: admin123
+    # Password user: user123
+    op.execute(
+        f"INSERT INTO users (username, hashed_password, full_name, role, is_active) VALUES "
+        f"('admin', '{get_password_hash('password123')}', 'Admin', 'admin', true),"
+        f"('user', '{get_password_hash('password123')}', 'Operator OPD', 'user', true)"
+    )
+
+def downgrade() -> None:
+    op.drop_table('users')
+--- END FILE: mimika-datahub-be/alembic/versions/892527d5c154_create_users_table_and_seed.py ---
+
+--- START FILE: mimika-datahub-be/alembic/versions/fe395a9d2545_init.py ---
+"""init
+
+Revision ID: fe395a9d2545
+Revises: 
+Create Date: 2026-05-05 10:20:29.809672
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+
+
+# revision identifiers, used by Alembic.
+revision: str = 'fe395a9d2545'
+down_revision: Union[str, Sequence[str], None] = None
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    # ### commands auto generated by Alembic - please adjust! ###
+    op.create_table('categories',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('name', sa.String(), nullable=False),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('name')
+    )
+    op.create_index(op.f('ix_categories_id'), 'categories', ['id'], unique=False)
+    op.create_table('sources',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('name', sa.String(), nullable=False),
+    sa.Column('type', sa.String(), nullable=True),
+    sa.Column('icon', sa.String(), nullable=True),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('name')
+    )
+    op.create_index(op.f('ix_sources_id'), 'sources', ['id'], unique=False)
+    op.create_table('surveys',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('title', sa.String(), nullable=False),
+    sa.Column('description', sa.String(), nullable=True),
+    sa.Column('location', sa.String(), nullable=True),
+    sa.Column('start_date', sa.DateTime(), nullable=True),
+    sa.Column('end_date', sa.DateTime(), nullable=True),
+    sa.Column('questions', sa.JSON(), nullable=True),
+    sa.Column('status', sa.String(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=True),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_surveys_id'), 'surveys', ['id'], unique=False)
+    op.create_table('datasets',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('title', sa.String(), nullable=False),
+    sa.Column('source_id', sa.Integer(), nullable=True),
+    sa.Column('category_id', sa.Integer(), nullable=True),
+    sa.Column('year', sa.Integer(), nullable=True),
+    sa.Column('period', sa.String(), nullable=True),
+    sa.Column('description', sa.Text(), nullable=True),
+    sa.Column('total_rows', sa.Integer(), nullable=True),
+    sa.Column('quality_score', sa.Float(), nullable=True),
+    sa.Column('last_ingest_stats', sa.JSON(), nullable=True),
+    sa.Column('headers', sa.JSON(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['category_id'], ['categories.id'], ),
+    sa.ForeignKeyConstraint(['source_id'], ['sources.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_datasets_id'), 'datasets', ['id'], unique=False)
+    op.create_table('survey_responses',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('survey_id', sa.Integer(), nullable=True),
+    sa.Column('answers', sa.JSON(), nullable=True),
+    sa.Column('submitted_at', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['survey_id'], ['surveys.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_survey_responses_id'), 'survey_responses', ['id'], unique=False)
+    op.create_table('data_rows',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('dataset_id', sa.Integer(), nullable=True),
+    sa.Column('content', sa.JSON(), nullable=True),
+    sa.Column('row_hash', sa.String(), nullable=True),
+    sa.ForeignKeyConstraint(['dataset_id'], ['datasets.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_data_rows_id'), 'data_rows', ['id'], unique=False)
+    op.create_index(op.f('ix_data_rows_row_hash'), 'data_rows', ['row_hash'], unique=False)
+    # ### end Alembic commands ###
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    # ### commands auto generated by Alembic - please adjust! ###
+    op.drop_index(op.f('ix_data_rows_row_hash'), table_name='data_rows')
+    op.drop_index(op.f('ix_data_rows_id'), table_name='data_rows')
+    op.drop_table('data_rows')
+    op.drop_index(op.f('ix_survey_responses_id'), table_name='survey_responses')
+    op.drop_table('survey_responses')
+    op.drop_index(op.f('ix_datasets_id'), table_name='datasets')
+    op.drop_table('datasets')
+    op.drop_index(op.f('ix_surveys_id'), table_name='surveys')
+    op.drop_table('surveys')
+    op.drop_index(op.f('ix_sources_id'), table_name='sources')
+    op.drop_table('sources')
+    op.drop_index(op.f('ix_categories_id'), table_name='categories')
+    op.drop_table('categories')
+    # ### end Alembic commands ###
+
+--- END FILE: mimika-datahub-be/alembic/versions/fe395a9d2545_init.py ---
+
+--- START FILE: mimika-datahub-be/alembic.ini ---
+# A generic, single database configuration.
+
+[alembic]
+# path to migration scripts.
+# this is typically a path given in POSIX (e.g. forward slashes)
+# format, relative to the token %(here)s which refers to the location of this
+# ini file
+script_location = %(here)s/alembic
+
+# template used to generate migration file names; The default value is %%(rev)s_%%(slug)s
+# Uncomment the line below if you want the files to be prepended with date and time
+# see https://alembic.sqlalchemy.org/en/latest/tutorial.html#editing-the-ini-file
+# for all available tokens
+# file_template = %%(year)d_%%(month).2d_%%(day).2d_%%(hour).2d%%(minute).2d-%%(rev)s_%%(slug)s
+# Or organize into date-based subdirectories (requires recursive_version_locations = true)
+# file_template = %%(year)d/%%(month).2d/%%(day).2d_%%(hour).2d%%(minute).2d_%%(second).2d_%%(rev)s_%%(slug)s
+
+# sys.path path, will be prepended to sys.path if present.
+# defaults to the current working directory.  for multiple paths, the path separator
+# is defined by "path_separator" below.
+prepend_sys_path = .
+
+
+# timezone to use when rendering the date within the migration file
+# as well as the filename.
+# If specified, requires the tzdata library which can be installed by adding
+# `alembic[tz]` to the pip requirements.
+# string value is passed to ZoneInfo()
+# leave blank for localtime
+# timezone =
+
+# max length of characters to apply to the "slug" field
+# truncate_slug_length = 40
+
+# set to 'true' to run the environment during
+# the 'revision' command, regardless of autogenerate
+# revision_environment = false
+
+# set to 'true' to allow .pyc and .pyo files without
+# a source .py file to be detected as revisions in the
+# versions/ directory
+# sourceless = false
+
+# version location specification; This defaults
+# to <script_location>/versions.  When using multiple version
+# directories, initial revisions must be specified with --version-path.
+# The path separator used here should be the separator specified by "path_separator"
+# below.
+# version_locations = %(here)s/bar:%(here)s/bat:%(here)s/alembic/versions
+
+# path_separator; This indicates what character is used to split lists of file
+# paths, including version_locations and prepend_sys_path within configparser
+# files such as alembic.ini.
+# The default rendered in new alembic.ini files is "os", which uses os.pathsep
+# to provide os-dependent path splitting.
+#
+# Note that in order to support legacy alembic.ini files, this default does NOT
+# take place if path_separator is not present in alembic.ini.  If this
+# option is omitted entirely, fallback logic is as follows:
+#
+# 1. Parsing of the version_locations option falls back to using the legacy
+#    "version_path_separator" key, which if absent then falls back to the legacy
+#    behavior of splitting on spaces and/or commas.
+# 2. Parsing of the prepend_sys_path option falls back to the legacy
+#    behavior of splitting on spaces, commas, or colons.
+#
+# Valid values for path_separator are:
+#
+# path_separator = :
+# path_separator = ;
+# path_separator = space
+# path_separator = newline
+#
+# Use os.pathsep. Default configuration used for new projects.
+path_separator = os
+
+# set to 'true' to search source files recursively
+# in each "version_locations" directory
+# new in Alembic version 1.10
+# recursive_version_locations = false
+
+# the output encoding used when revision files
+# are written from script.py.mako
+# output_encoding = utf-8
+
+# database URL.  This is consumed by the user-maintained env.py script only.
+# other means of configuring database URLs may be customized within the env.py
+# file.
+sqlalchemy.url = postgresql://postgres:naufal@localhost/mimika_datahub
+
+
+[post_write_hooks]
+# post_write_hooks defines scripts or Python functions that are run
+# on newly generated revision scripts.  See the documentation for further
+# detail and examples
+
+# format using "black" - use the console_scripts runner, against the "black" entrypoint
+# hooks = black
+# black.type = console_scripts
+# black.entrypoint = black
+# black.options = -l 79 REVISION_SCRIPT_FILENAME
+
+# lint with attempts to fix using "ruff" - use the module runner, against the "ruff" module
+# hooks = ruff
+# ruff.type = module
+# ruff.module = ruff
+# ruff.options = check --fix REVISION_SCRIPT_FILENAME
+
+# Alternatively, use the exec runner to execute a binary found on your PATH
+# hooks = ruff
+# ruff.type = exec
+# ruff.executable = ruff
+# ruff.options = check --fix REVISION_SCRIPT_FILENAME
+
+# Logging configuration.  This is also consumed by the user-maintained
+# env.py script only.
+[loggers]
+keys = root,sqlalchemy,alembic
+
+[handlers]
+keys = console
+
+[formatters]
+keys = generic
+
+[logger_root]
+level = WARNING
+handlers = console
+qualname =
+
+[logger_sqlalchemy]
+level = WARNING
+handlers =
+qualname = sqlalchemy.engine
+
+[logger_alembic]
+level = INFO
+handlers =
+qualname = alembic
+
+[handler_console]
+class = StreamHandler
+args = (sys.stderr,)
+level = NOTSET
+formatter = generic
+
+[formatter_generic]
+format = %(levelname)-5.5s [%(name)s] %(message)s
+datefmt = %H:%M:%S
+
+--- END FILE: mimika-datahub-be/alembic.ini ---
+
+--- START FILE: mimika-datahub-be/app/api/api_router.py ---
+from fastapi import APIRouter
+from app.api.endpoints import categories, sources, datasets, data_ingest, data_view, dashboard, brida, auth
+
+api_router = APIRouter()
+
+# Grouping Router
+api_router.include_router(categories.router, prefix="/categories", tags=["0. Master - Categories"])
+api_router.include_router(sources.router, prefix="/sources", tags=["1. Master - Sources (OPD)"])
+api_router.include_router(datasets.router, prefix="/datasets", tags=["2. Master - Datasets"])
+api_router.include_router(data_ingest.router, prefix="/ingest", tags=["3. Process - Upload & Cleaning"])
+api_router.include_router(data_view.router, prefix="/view", tags=["4. Access - View & Catalog"])
+api_router.include_router(dashboard.router, prefix="/dashboard", tags=["5. Analytics - Dashboard"])
+api_router.include_router(brida.router, prefix="/brida", tags=["6. Analytics - Survey"])
+api_router.include_router(auth.router, prefix="/auth", tags=["7. Auth - Login"])
+--- END FILE: mimika-datahub-be/app/api/api_router.py ---
+
+--- START FILE: mimika-datahub-be/app/api/deps.py ---
+
+--- END FILE: mimika-datahub-be/app/api/deps.py ---
+
+--- START FILE: mimika-datahub-be/app/api/endpoints/auth.py ---
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.core import security
+
+router = APIRouter()
+
+@router.post("/login")
+def login(db: Session = Depends(get_db), form_data: OAuth2PasswordRequestForm = Depends()):
+    user = db.query(models.User).filter(models.User.username == form_data.username).first()
+    if not user or not security.verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Username atau password salah")
+    
+    return {
+        "access_token": security.create_access_token(user.username),
+        "token_type": "bearer",
+        "role": user.role
+    }
+--- END FILE: mimika-datahub-be/app/api/endpoints/auth.py ---
+
+--- START FILE: mimika-datahub-be/app/api/endpoints/brida.py ---
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+import hashlib
+import json
+
+router = APIRouter()
+
+# 1. BUAT SURVEY BARU
+@router.post("/create")
+def create_survey(survey_in: schemas.SurveyCreate, db: Session = Depends(get_db)):
+    new_survey = models.Survey(**survey_in.dict())
+    db.add(new_survey)
+    db.commit()
+    db.refresh(new_survey)
+    return new_survey
+
+# 2. SUBMIT JAWABAN (Ditembak saat responden mengisi form)
+@router.post("/submit-response")
+def submit_response(res_in: schemas.SurveyResponseCreate, db: Session = Depends(get_db)):
+    new_res = models.SurveyResponse(
+        survey_id=res_in.survey_id,
+        answers=res_in.answers
+    )
+    db.add(new_res)
+    db.commit()
+    return {"status": "success", "message": "Terima kasih, jawaban Anda telah tersimpan."}
+
+# 3. GENERATE DATASET (Fitur Otomatisasi Bab IX)
+@router.post("/generate-dataset/{survey_id}")
+def generate_dataset(survey_id: int, db: Session = Depends(get_db)):
+    # A. Ambil data survey dan semua jawabannya
+    survey = db.query(models.Survey).filter(models.Survey.id == survey_id).first()
+    responses = db.query(models.SurveyResponse).filter(models.SurveyResponse.survey_id == survey_id).all()
+    
+    if not responses:
+        raise HTTPException(status_code=400, detail="Belum ada responden untuk survey ini.")
+
+    # B. Pastikan ada Source 'BRIDA'
+    brida_source = db.query(models.Source).filter(models.Source.name == "BRIDA").first()
+    if not brida_source:
+        brida_source = models.Source(name="BRIDA", type="brida", icon="fa-chart-line")
+        db.add(brida_source)
+        db.commit()
+        db.refresh(brida_source)
+
+    # C. Buat Dataset Baru di Katalog Utama
+    new_dataset = models.Dataset(
+        title=f"Dataset Survey: {survey.title}",
+        source_id=brida_source.id,
+        headers=list(responses[0].answers.keys()) # Ambil kunci jawaban sebagai header
+    )
+    db.add(new_dataset)
+    db.commit()
+    db.refresh(new_dataset)
+
+    # D. Pindahkan setiap jawaban responden menjadi DataRow (bersih & anti-duplikat)
+    for res in responses:
+        content = res.answers
+        row_json = json.dumps(content, sort_keys=True)
+        row_hash = hashlib.md5(row_json.encode()).hexdigest()
+        
+        new_row = models.DataRow(
+            dataset_id=new_dataset.id,
+            content=content,
+            row_hash=row_hash
+        )
+        db.add(new_row)
+    
+    db.commit()
+    return {"status": "success", "dataset_id": new_dataset.id, "message": "Dataset survey berhasil dipublikasikan!"}
+--- END FILE: mimika-datahub-be/app/api/endpoints/brida.py ---
+
+--- START FILE: mimika-datahub-be/app/api/endpoints/categories.py ---
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+from typing import List
+
+router = APIRouter()
+
+@router.post("/", response_model=schemas.CategoryOut)
+def create_category(cat_in: schemas.CategoryCreate, db: Session = Depends(get_db)):
+    existing = db.query(models.Category).filter(models.Category.name == cat_in.name).first()
+    if existing:
+        return existing # Jika sudah ada, kembalikan yang lama
+    
+    new_cat = models.Category(name=cat_in.name)
+    db.add(new_cat)
+    db.commit()
+    db.refresh(new_cat)
+    return new_cat
+
+@router.get("/", response_model=List[schemas.CategoryOut])
+def list_categories(db: Session = Depends(get_db)):
+    return db.query(models.Category).all()
+--- END FILE: mimika-datahub-be/app/api/endpoints/categories.py ---
+
+--- START FILE: mimika-datahub-be/app/api/endpoints/dashboard.py ---
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from app.db.session import get_db
+from app.models import models
+
+router = APIRouter()
+
+@router.get("/stats")
+def get_global_stats(db: Session = Depends(get_db)):
+    """Memberikan ringkasan data untuk kartu statistik di Dashboard utama"""
+    total_sources = db.query(models.Source).count()
+    total_datasets = db.query(models.Dataset).count()
+    total_rows = db.query(func.sum(models.Dataset.total_rows)).scalar() or 0
+    avg_quality = db.query(func.avg(models.Dataset.quality_score)).scalar() or 0
+    
+    return {
+        "summary": {
+            "total_sources": total_sources,
+            "total_datasets": total_datasets,
+            "total_records": total_rows,
+            "avg_system_quality": f"{round(avg_quality, 2)}%"
+        }
+    }
+
+@router.get("/source-performance")
+def get_source_performance(db: Session = Depends(get_db)):
+    """Melihat performa upload per OPD (Sesuai mockup monitoring-opd.html)"""
+    sources = db.query(models.Source).all()
+    performance = []
+    
+    for s in sources:
+        datasets_count = db.query(models.Dataset).filter(models.Dataset.source_id == s.id).count()
+        avg_q = db.query(func.avg(models.Dataset.quality_score)).filter(models.Dataset.source_id == s.id).scalar() or 0
+        
+        performance.append({
+            "source_name": s.name,
+            "total_datasets": datasets_count,
+            "average_quality": f"{round(avg_q, 2)}%",
+            "status": "Aktif" if datasets_count > 0 else "Belum Upload"
+        })
+        
+    return performance
+--- END FILE: mimika-datahub-be/app/api/endpoints/dashboard.py ---
+
+--- START FILE: mimika-datahub-be/app/api/endpoints/data_ingest.py ---
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+from app.services.cleaning_engine import CleaningEngine
+
+router = APIRouter()
+
+@router.post("/upload-process", response_model=schemas.UploadResponse)
+async def upload_and_process_form(
+    # Informasi dari Form (dikirim sebagai form-data)
+    title: str = Form(...),
+    source_id: int = Form(...),
+    category_id: int = Form(...),
+    year: int = Form(...),
+    period: str = Form(...),
+    description: str = Form(None),
+    file: UploadFile = File(...), 
+    db: Session = Depends(get_db)
+):
+    # 1. Simpan Metadata Dataset terlebih dahulu
+    new_dataset = models.Dataset(
+        title=title,
+        source_id=source_id,
+        category_id=category_id,
+        year=year,
+        period=period,
+        description=description
+    )
+    db.add(new_dataset)
+    db.commit()
+    db.refresh(new_dataset)
+
+    # 2. Proses File melalui Cleaning Engine
+    contents = await file.read()
+    try:
+        headers, cleaned_records = CleaningEngine.clean_and_align(contents)
+    except Exception as e:
+        db.delete(new_dataset) # Rollback metadata jika file rusak
+        db.commit()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # 3. Update headers
+    new_dataset.headers = headers
+
+    # 4. Simpan baris data & Cek Redundansi
+    inserted_count = 0
+    duplicate_count = 0
+
+    for rec in cleaned_records:
+        # Cek duplikasi baris dalam dataset ini
+        exists = db.query(models.DataRow).filter(
+            models.DataRow.dataset_id == new_dataset.id,
+            models.DataRow.row_hash == rec["row_hash"]
+        ).first()
+
+        if not exists:
+            new_row = models.DataRow(
+                dataset_id=new_dataset.id,
+                content=rec["content"],
+                row_hash=rec["row_hash"]
+            )
+            db.add(new_row)
+            inserted_count += 1
+        else:
+            duplicate_count += 1
+
+    # 5. Hitung Skor Kualitas
+    total_processed = inserted_count + duplicate_count
+    q_score = (inserted_count / total_processed * 100) if total_processed > 0 else 100.0
+
+    new_dataset.total_rows = inserted_count
+    new_dataset.quality_score = round(q_score, 2)
+    
+    db.commit()
+
+    return {
+        "status": "success",
+        "dataset_id": new_dataset.id,
+        "headers_found": headers,
+        "new_records": inserted_count,
+        "duplicates_ignored": duplicate_count
+    }
+--- END FILE: mimika-datahub-be/app/api/endpoints/data_ingest.py ---
+
+--- START FILE: mimika-datahub-be/app/api/endpoints/data_view.py ---
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from typing import List, Optional
+from fastapi.responses import StreamingResponse
+from app.services.export_engine import ExportEngine
+
+router = APIRouter()
+
+@router.get("/preview/{dataset_id}")
+def preview_clean_data(
+    dataset_id: int, 
+    page: int = Query(1, ge=1, description="Nomor halaman"),
+    limit: int = Query(50, ge=1, le=100, description="Jumlah baris per halaman"),
+    db: Session = Depends(get_db)
+):
+    """
+    Mengambil data yang sudah bersih dari satu dataset tertentu.
+    Sudah mendukung paginasi (pagination) agar tidak membebani browser.
+    """
+    # 1. Ambil Metadata Dataset
+    dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset ID tidak ditemukan")
+
+    # 2. Ambil Nama Source (OPD) untuk info tambahan di dashboard
+    source = db.query(models.Source).filter(models.Source.id == dataset.source_id).first()
+    source_name = source.name if source else "Unknown"
+
+    # 3. Ambil data baris dengan paginasi
+    offset = (page - 1) * limit
+    rows = db.query(models.DataRow).filter(
+        models.DataRow.dataset_id == dataset_id
+    ).offset(offset).limit(limit).all()
+
+    # 4. Total Baris (untuk info paginasi di frontend)
+    total_rows = db.query(models.DataRow).filter(models.DataRow.dataset_id == dataset_id).count()
+
+    # 5. Ekstrak 'content' dari setiap baris
+    clean_data = [r.content for r in rows]
+
+    return {
+        "dataset_id": dataset.id,
+        "title": dataset.title,
+        "source_name": source_name,
+        "headers": dataset.headers,  # Daftar kolom yang sudah rapi
+        "total_records": total_rows,
+        "current_page": page,
+        "total_pages": (total_rows + limit - 1) // limit,
+        "data": clean_data  # Isi data baris per baris
+    }
+
+@router.get("/catalog")
+def get_catalog(db: Session = Depends(get_db)):
+    """
+    Melihat daftar seluruh dataset yang sudah berhasil di-upload ke sistem.
+    Ini untuk mengisi menu utama atau katalog data pemerintah.
+    """
+    datasets = db.query(models.Dataset).all()
+    catalog = []
+    
+    for ds in datasets:
+        source = db.query(models.Source).filter(models.Source.id == ds.source_id).first()
+        row_count = db.query(models.DataRow).filter(models.DataRow.dataset_id == ds.id).count()
+        
+        catalog.append({
+            "id": ds.id,
+            "title": ds.title,
+            "source_name": source.name if source else "Unknown",
+            "source_type": source.type if source else "Unknown",
+            "columns": ds.headers,
+            "total_records": row_count,
+            "created_at": ds.created_at.strftime("%Y-%m-%d %H:%M:%S") if ds.created_at else None
+        })
+        
+    return catalog
+
+@router.get("/export/{dataset_id}")
+def export_dataset(dataset_id: int, db: Session = Depends(get_db)):
+    rows = db.query(models.DataRow).filter(models.DataRow.dataset_id == dataset_id).all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="Tidak ada data untuk di-export")
+    
+    clean_data = [r.content for r in rows]
+    file_obj = ExportEngine.to_excel(clean_data, f"export_{dataset_id}")
+    
+    return StreamingResponse(
+        file_obj,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=mimika_data_clean_{dataset_id}.xlsx"}
+    )
+--- END FILE: mimika-datahub-be/app/api/endpoints/data_view.py ---
+
+--- START FILE: mimika-datahub-be/app/api/endpoints/datasets.py ---
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+from typing import List
+
+router = APIRouter()
+
+# Membuat Judul Dataset Baru
+@router.post("/", response_model=schemas.DatasetOut)
+def create_dataset(dataset_in: schemas.DatasetCreate, db: Session = Depends(get_db)):
+    # 1. Pastikan Source ID-nya ada (Cek apakah OPD-nya terdaftar)
+    source = db.query(models.Source).filter(models.Source.id == dataset_in.source_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source ID tidak ditemukan. Buat Source dulu.")
+    
+    new_dataset = models.Dataset(
+        title=dataset_in.title,
+        source_id=dataset_in.source_id
+    )
+    db.add(new_dataset)
+    db.commit()
+    db.refresh(new_dataset)
+    return new_dataset
+
+# Mengambil daftar semua Dataset
+@router.get("/", response_model=List[schemas.DatasetOut])
+def list_datasets(db: Session = Depends(get_db)):
+    return db.query(models.Dataset).all()
+--- END FILE: mimika-datahub-be/app/api/endpoints/datasets.py ---
+
+--- START FILE: mimika-datahub-be/app/api/endpoints/sources.py ---
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+from typing import List
+
+router = APIRouter()
+
+# Menambah Sumber Data Baru (OPD/BPS/dll)
+@router.post("/", response_model=schemas.SourceOut)
+def create_source(source_in: schemas.SourceCreate, db: Session = Depends(get_db)):
+    # Cek apakah nama sudah ada
+    existing = db.query(models.Source).filter(models.Source.name == source_in.name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Nama Sumber Data sudah terdaftar")
+    
+    new_source = models.Source(
+        name=source_in.name,
+        type=source_in.type,
+        icon=source_in.icon
+    )
+    db.add(new_source)
+    db.commit()
+    db.refresh(new_source)
+    return new_source
+
+# Mengambil daftar semua Sumber Data
+@router.get("/", response_model=List[schemas.SourceOut])
+def list_sources(db: Session = Depends(get_db)):
+    return db.query(models.Source).all()
+--- END FILE: mimika-datahub-be/app/api/endpoints/sources.py ---
+
+--- START FILE: mimika-datahub-be/app/core/security.py ---
+# app/core/security.py
+from datetime import datetime, timedelta
+from typing import Any, Union
+from jose import jwt
+from passlib.context import CryptContext
+
+# PENTING: Ganti SECRET_KEY dengan string acak yang kuat
+SECRET_KEY = "MIMIKA_DATAHUB_SUPER_SECRET_KEY_123"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 1 hari
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
+
+def create_access_token(subject: Union[str, Any]) -> str:
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode = {"exp": expire, "sub": str(subject)}
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+--- END FILE: mimika-datahub-be/app/core/security.py ---
+
+--- START FILE: mimika-datahub-be/app/db/base.py ---
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
+--- END FILE: mimika-datahub-be/app/db/base.py ---
+
+--- START FILE: mimika-datahub-be/app/db/session.py ---
+import os
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+# Load .env
+load_dotenv()
+
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not SQLALCHEMY_DATABASE_URL:
+    raise ValueError("DATABASE_URL tidak ditemukan di .env")
+
+engine = create_engine(SQLALCHEMY_DATABASE_URL)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine
+)
+
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+--- END FILE: mimika-datahub-be/app/db/session.py ---
+
+--- START FILE: mimika-datahub-be/app/main.py ---
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.db.session import engine, Base
+from app.api.api_router import api_router
+
+# PENTING: Impor models di sini agar SQLAlchemy mengenali tabel-tabelnya
+# from app.models import models 
+
+# # Perintah paksa buat tabel
+# print("Sedang membuat tabel...")
+# try:
+#     Base.metadata.create_all(bind=engine)
+#     print("Tabel berhasil dibuat atau sudah ada.")
+# except Exception as e:
+#     print(f"Gagal membuat tabel: {e}")
+
+app = FastAPI(title="Mimika DataHub - Versi 1")
+
+# Setting CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(api_router, prefix="/api/v1")
+
+@app.get("/")
+def root():
+    return {"message": "Mimika DataHub API is Running"}
+--- END FILE: mimika-datahub-be/app/main.py ---
+
+--- START FILE: mimika-datahub-be/app/models/models.py ---
+from sqlalchemy import Column, Integer, Float, String, ForeignKey, DateTime, JSON, Float, Text, Boolean
+from sqlalchemy.orm import relationship
+from app.db.base import Base
+from app.models import models
+import datetime
+
+class Source(Base):
+    """Tabel OPD atau Sumber Data (BPS, Dinas Kesehatan, dll)"""
+    __tablename__ = "sources"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    type = Column(String) # bps, opd, kementerian, dll
+    icon = Column(String, default="fa-database")
+    
+    datasets = relationship("Dataset", back_populates="owner")
+
+class Category(Base):
+    """Tabel Kategori Data (Kependudukan, Kesehatan, dll)"""
+    __tablename__ = "categories"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    
+    datasets = relationship("Dataset", back_populates="category")
+
+class Dataset(Base):
+    """Tabel Metadata File (Judul, Nama Kolom asli)"""
+    __tablename__ = "datasets"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+
+    source_id = Column(Integer, ForeignKey("sources.id"))
+    category_id = Column(Integer, ForeignKey("categories.id"))
+
+    year = Column(Integer)
+    period = Column(String)
+    description = Column(Text)
+
+    total_rows = Column(Integer, default=0)
+    quality_score = Column(Float, default=0.0) # Skor 0-100
+    last_ingest_stats = Column(JSON) # Menyimpan info: {"duplicates": 5, "nulls": 2}
+    
+    # Kita simpan daftar kolom yang sudah dirapikan di sini (misal: ["nama", "tahun", "jumlah"])
+    headers = Column(JSON) 
+    
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    owner = relationship("Source", back_populates="datasets")
+    rows = relationship("DataRow", back_populates="dataset", cascade="all, delete-orphan")
+    category = relationship("Category", back_populates="datasets")
+
+class DataRow(Base):
+    """Tabel Penampung Isi File yang Sudah Bersih"""
+    __tablename__ = "data_rows"
+    id = Column(Integer, primary_key=True, index=True)
+    dataset_id = Column(Integer, ForeignKey("datasets.id"))
+    
+    # Isi satu baris file dalam format JSON (Contoh: {"nama": "Mimika Baru", "jumlah": 150})
+    # Ini sangat fleksibel untuk jumlah kolom berapapun.
+    content = Column(JSON) 
+    
+    # Hash unik untuk mencegah redundansi (Cek apakah baris isinya sama persis)
+    row_hash = Column(String, index=True)
+
+    dataset = relationship("Dataset", back_populates="rows")
+
+class Survey(Base):
+    __tablename__ = "surveys"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    description = Column(String)
+    location = Column(String)
+    start_date = Column(DateTime)
+    end_date = Column(DateTime)
+    # Menyimpan struktur pertanyaan: [{"text": "Puas?", "type": "rating"}, ...]
+    questions = Column(JSON) 
+    status = Column(String, default="active") # active / closed
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    responses = relationship("SurveyResponse", back_populates="survey", cascade="all, delete-orphan")
+
+class SurveyResponse(Base):
+    __tablename__ = "survey_responses"
+    id = Column(Integer, primary_key=True, index=True)
+    survey_id = Column(Integer, ForeignKey("surveys.id"))
+    # Menyimpan jawaban responden: {"pertanyaan_1": "Sangat Puas", "pertanyaan_2": 5}
+    answers = Column(JSON) 
+    submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    survey = relationship("Survey", back_populates="responses")
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    full_name = Column(String)
+    role = Column(String, default="user")
+    is_active = Column(Boolean, default=True)
+--- END FILE: mimika-datahub-be/app/models/models.py ---
+
+--- START FILE: mimika-datahub-be/app/schemas/schemas.py ---
+from pydantic import BaseModel
+from typing import List, Optional, Any, Dict
+from datetime import datetime
+
+class CategoryCreate(BaseModel):
+    name: str
+
+class CategoryOut(BaseModel):
+    id: int
+    name: str
+    class Config:
+        from_attributes = True
+
+# Schema untuk Source (OPD)
+class SourceBase(BaseModel):
+    name: str
+    type: str
+    icon: Optional[str] = "fa-database"
+
+class SourceCreate(SourceBase):
+    pass
+
+class SourceOut(SourceBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+# Schema untuk Dataset (Judul Tabel)
+class DatasetCreate(BaseModel):
+    title: str
+    source_id: int
+    category_id: int
+    year: int
+    period: str
+    description: Optional[str] = None
+
+class DatasetOut(DatasetCreate):
+    id: int
+    headers: Optional[List[str]] = None
+    total_rows: int
+    quality_score: float
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+# Schema untuk Respon Upload
+class UploadResponse(BaseModel):
+    status: str
+    dataset_id: int
+    headers_found: List[str]
+    new_records: int
+    duplicates_ignored: int
+
+class SurveyCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    location: Optional[str] = None
+    questions: List[Dict[str, Any]]
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+
+class SurveyResponseCreate(BaseModel):
+    survey_id: int
+    answers: Dict[str, Any]
+
+
+--- END FILE: mimika-datahub-be/app/schemas/schemas.py ---
+
+--- START FILE: mimika-datahub-be/app/services/cleaning_engine.py ---
+import pandas as pd
+import io
+import hashlib
+import json
+import re
+import numpy as np
+
+class CleaningEngine:
+    @staticmethod
+    def clean_text_smart(text: str) -> str:
+        """Pembersihan teks: spasi tanda baca, double space, dan title case"""
+        if not text or pd.isna(text):
+            return None
+        
+        text = str(text)
+        # 1. Perbaikan spasi tanda baca: "," atau "." harus diikuti spasi (contoh: "A,B" -> "A, B")
+        text = re.sub(r'([,.])(?!\s|$)', r'\1 ', text)
+        
+        # 2. Hapus spasi SEBELUM tanda baca (contoh: "Data , Baru" -> "Data, Baru")
+        text = re.sub(r'\s+([,.])', r'\1', text)
+        
+        # 3. Hapus spasi ganda di tengah kalimat
+        text = re.sub(r'\s+', ' ', text)
+        
+        # 4. Trim dan ubah ke Title Case agar rapi
+        return text.strip().title()
+
+    @staticmethod
+    def clean_numeric_smart(val: any) -> any:
+        """Pembersihan angka: menangani format Rp, ,00, dan pemisah ribuan Indonesia"""
+        if pd.isna(val) or val == "" or val is None:
+            return None
+        
+        # Jika sudah int/float murni, langsung kembalikan
+        if isinstance(val, (int, float, np.integer, np.floating)):
+            return float(val)
+        
+        s_val = str(val).strip().lower()
+
+        # 1. Hilangkan simbol mata uang dan karakter non-penting
+        s_val = s_val.replace('rp', '').replace('idr', '').replace('$', '').replace(' ', '')
+
+        # 2. Tangani format ekor desimal kosong ",00" atau ".00"
+        if s_val.endswith(',00') or s_val.endswith('.00'):
+            s_val = s_val[:-3]
+
+        try:
+            # 3. Logika Pemisah Ribuan (Indonesia: Titik ribuan, Koma desimal)
+            if '.' in s_val and ',' in s_val:
+                # Contoh: 1.250.000,50 -> 1250000.50
+                s_val = s_val.replace('.', '').replace(',', '.')
+            elif ',' in s_val:
+                # Cek jika koma berfungsi sebagai desimal (misal 150,5)
+                parts = s_val.split(',')
+                if len(parts[-1]) <= 2: # Asumsi desimal biasanya 1-2 angka
+                    s_val = s_val.replace(',', '.')
+                else:
+                    # Jika lebih dari 2 angka, mungkin itu salah ketik ribuan pakai koma
+                    s_val = s_val.replace(',', '')
+            else:
+                # Bersihkan sisa karakter non-angka kecuali titik desimal
+                s_val = re.sub(r'[^\d.]', '', s_val)
+            
+            final_num = float(s_val)
+            # Kembalikan sebagai Integer jika tidak ada komanya (.0)
+            return int(final_num) if final_num.is_integer() else final_num
+        except:
+            return str(val).strip() # Balikkan string jika gagal konversi
+
+    @staticmethod
+    def clean_and_align(file_contents: bytes):
+        # 1. BACA FILE SECARA RAW (Tanpa asumsi header)
+        try:
+            try:
+                # header=None artinya kita baca semua cell sebagai data mentah
+                df_raw = pd.read_excel(io.BytesIO(file_contents), header=None)
+            except:
+                df_raw = pd.read_csv(io.BytesIO(file_contents), header=None)
+        except Exception as e:
+            raise Exception(f"Format file tidak didukung: {str(e)}")
+
+        # 2. LOGIKA DETEKSI HEADER DINAMIS (Scanning Top-Left)
+        # Mencari baris pertama yang memiliki data paling banyak (asumsi itu header)
+        # atau baris pertama yang tidak kosong.
+        
+        first_row_with_data = 0
+        for i, row in df_raw.iterrows():
+            # Jika baris ini memiliki lebih dari 1 kolom yang terisi, kita anggap ini start header
+            if row.count() > 1: 
+                first_row_with_data = i
+                break
+        
+        # Potong dataframe dari baris yang ditemukan
+        df_raw = df_raw.iloc[first_row_with_data:].reset_index(drop=True)
+        
+        # Jadikan baris pertama tersebut sebagai header
+        df_raw.columns = df_raw.iloc[0]
+        df = df_raw[1:].reset_index(drop=True)
+
+        # 3. DETEKSI KOLOM KOSONG DI KIRI (Jika mulai dari kolom B, C, dst)
+        # Hapus kolom yang namanya "Unnamed" atau NaN
+        df = df.loc[:, df.columns.notna()]
+        df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed')]
+
+        # 4. PENYELARASAN NAMA HEADER (Snake Case)
+        def clean_header_name(col):
+            c = str(col).strip().lower()
+            c = re.sub(r'[^a-z0-9_]', '_', c)
+            return re.sub(r'_+', '_', c).strip('_')
+
+        df.columns = [clean_header_name(c) for c in df.columns]
+
+        # 5. MEMBERSIHKAN DATA KOSONG & DUPLIKAT INTERNAL
+        df = df.dropna(how='all') 
+
+        # 6. PROSES DATA PER BARIS
+        cleaned_records = []
+        for _, row in df.iterrows():
+            row_dict = row.to_dict()
+            processed_row = {}
+            
+            for key, val in row_dict.items():
+                if pd.isna(val):
+                    processed_row[key] = None
+                    continue
+                
+                numeric_keywords = ['jumlah', 'nilai', 'harga', 'total', 'value', 'biaya', 'realisasi', 'target', 'skor', 'tahun']
+                if any(kw in key for kw in numeric_keywords):
+                    processed_row[key] = CleaningEngine.clean_numeric_smart(val)
+                else:
+                    processed_row[key] = CleaningEngine.clean_text_smart(val)
+
+            # 7. GENERATE HASH (Anti-Redundan)
+            row_json = json.dumps(processed_row, sort_keys=True, default=str)
+            row_hash = hashlib.md5(row_json.encode()).hexdigest()
+
+            cleaned_records.append({
+                "content": processed_row,
+                "row_hash": row_hash
+            })
+
+        # 8. DEDUPLIKASI FINAL
+        seen_hashes = set()
+        final_records = []
+        for item in cleaned_records:
+            if item["row_hash"] not in seen_hashes:
+                final_records.append(item)
+                seen_hashes.add(item["row_hash"])
+
+        return df.columns.tolist(), final_records
+--- END FILE: mimika-datahub-be/app/services/cleaning_engine.py ---
+
+--- START FILE: mimika-datahub-be/app/services/export_engine.py ---
+import pandas as pd
+import io
+
+class ExportEngine:
+    @staticmethod
+    def to_excel(data_list: list, filename: str):
+        df = pd.DataFrame(data_list)
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='MimikaDataHub_Clean')
+        output.seek(0)
+        return output
+--- END FILE: mimika-datahub-be/app/services/export_engine.py ---
+
+--- START FILE: mimika-datahub-be/copy_project.py ---
+import os
+from pathlib import Path    
+
+# --- KONFIGURASI ---
+TARGET_DIRECTORY = "C:\\Users\\ASUS\\Documents\\gthub\\mimika-datahub-be"
+OUTPUT_FILE = "C:\\Users\\ASUS\\Documents\\gthub\\mimika-datahub-be\\mimika-be.txt"
+
+# Tambahkan pengecualian direktori lintas ekosistem
+EXCLUDE_DIRS = {
+    "node_modules", ".git", "dist", "build", "__pycache__", ".vscode", ".idea", "venv",
+    ".next", ".nuxt", ".svelte-kit", ".angular", ".cache", ".parcel-cache", ".vite",
+    ".docusaurus", ".astro", ".storybook", ".turbo",
+    "coverage", ".nyc_output", "jspm_packages", "bower_components", "elm-stuff",
+    ".dart_tool", ".pub", ".pub-cache", "DerivedData", "android", "ios", "web/build",
+    "vendor", "storage", "public/build", "public/storage", "assets",
+    ".venv", "env", ".mypy_cache", ".pytest_cache", ".tox", ".nox",
+    "build", "dist",
+    ".gradle", ".mvn", "target", "out", ".settings", ".cxx",
+    "bin", "obj", ".vs", "packages",
+    "bin", "pkg", "vendor",
+    "target",
+    "Pods", "DerivedData",
+    ".bundle", "log", "tmp", "vendor/bundle", 
+    "dist-newstyle", "cmake-build-debug", "cmake-build-release", ".terraform",
+}
+
+# Tambahkan pengecualian file lintas ekosistem (nama persis)
+EXCLUDE_FILES = {
+    ".DS_Store", "package-lock.json", "yarn.lock", "Readme.md", "README.txt", "README.md",
+
+    # Lockfiles & manifest lain
+    "pnpm-lock.yaml", "bun.lockb", "composer.lock", "pubspec.lock",
+    "Gemfile.lock", "Pipfile.lock", "poetry.lock", "Cargo.lock",
+    "mix-manifest.json", "vite-manifest.json",
+
+    # Env (tanpa wildcard → tambahkan varian umum)
+    ".env.development", ".env.production", ".env.test", ".env.example",
+
+    # Tools/metadata umum
+    ".flutter-plugins", ".flutter-plugins-dependencies", ".packages",
+    ".phpunit.result.cache",
+
+    # Android/iOS/Xcode umpan balik build (file)
+    "Generated.xcconfig", "LocalProperties.kt",
+}
+
+# Opsional: Jika Anda HANYA ingin menyalin ekstensi tertentu, isi daftar ini.
+# Contoh: INCLUDE_EXTENSIONS = {".ts", ".tsx", ".css"}
+# Jika dibiarkan kosong, skrip akan menyalin SEMUA file teks yang ditemukan.
+INCLUDE_EXTENSIONS = {}
+
+def is_binary(file_path: Path) -> bool:
+    try:
+        with open(file_path, 'rb') as f:
+            return b'\x00' in f.read(512)
+    except Exception:
+        return True
+
+def main():
+    target_path = Path(TARGET_DIRECTORY)
+    if not target_path.is_dir():
+        print(f"Error: Folder '{TARGET_DIRECTORY}' tidak ditemukan.")
+        return
+
+    print(f"Memproses folder: {target_path.resolve()}")
+
+    files_to_process = []
+    for file_path in sorted(target_path.rglob("*")):
+        if any(part in EXCLUDE_DIRS for part in file_path.parts):
+            continue
+
+        if file_path.is_file() and file_path.name not in EXCLUDE_FILES:
+            if INCLUDE_EXTENSIONS and file_path.suffix not in INCLUDE_EXTENSIONS:
+                continue
+            if not is_binary(file_path):
+                files_to_process.append(file_path)
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        f.write("="*50 + "\n")
+        f.write("STRUKTUR FOLDER (DAFTAR FILE)\n")
+        f.write("="*50 + "\n")
+        if not files_to_process:
+            f.write("Tidak ada file yang ditemukan.\n")
+        else:
+            for file_path in files_to_process:
+                relative_path = file_path.relative_to(target_path.parent)
+                f.write(str(relative_path).replace("\\", "/"))
+                f.write("\n")
+        f.write("\n\n")
+
+        f.write("="*50 + "\n")
+        f.write("ISI KODE\n")
+        f.write("="*50 + "\n\n")
+        
+        for file_path in files_to_process:
+            try:
+                content = file_path.read_text("utf-8", errors="ignore")
+                relative_path = file_path.relative_to(target_path.parent)
+                
+                f.write(f"--- START FILE: {str(relative_path).replace(os.sep, '/')} ---\n")
+                f.write(content)
+                f.write(f"\n--- END FILE: {str(relative_path).replace(os.sep, '/')} ---\n\n")
+                print(f"-> Menyalin konten: {relative_path}")
+            except Exception as e:
+                print(f"-> Gagal membaca: {relative_path} ({e})")
+
+    print(f"\nProses selesai! Output disimpan di '{OUTPUT_FILE}'.")
+
+if __name__ == "__main__":
+    main()
+
+--- END FILE: mimika-datahub-be/copy_project.py ---
+
+--- START FILE: mimika-datahub-be/requirements.txt ---
+# Web Framework & Server
+fastapi
+uvicorn[standard]
+
+# Database & Migration
+sqlalchemy
+psycopg2-binary
+alembic
+
+# Data Processing (Cleaning Engine)
+# Versi 2.1.0+ agar support fungsi .map() untuk DataFrame
+pandas>=2.1.0
+openpyxl
+numpy
+
+# Security & Authentication (JWT)
+python-jose[cryptography]
+passlib[bcrypt]==1.7.4
+bcrypt==3.2.2
+python-multipart
+
+# Utilities
+pydantic
+pydantic-settings
+python-dotenv
+--- END FILE: mimika-datahub-be/requirements.txt ---
+

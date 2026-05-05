@@ -21,14 +21,6 @@ class Category(Base):
     
     datasets = relationship("Dataset", back_populates="category")
 
-class DatasetType(Base):
-    """Tabel Tipe Dataset (Pemerintah, Non-Pemerintah)"""
-    __tablename__ = "dataset_type"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, nullable=False)
-    
-    datasets = relationship("Dataset", back_populates="datasetType")
-
 class SourceType(Base):
     """Tabel Jenis Sumber ())"""
     __tablename__ = "source_type"
@@ -42,10 +34,10 @@ class Dataset(Base):
     __tablename__ = "datasets"
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
+    dataset_type = Column(String)
 
     source_id = Column(Integer, ForeignKey("sources.id"))
     category_id = Column(Integer, ForeignKey("categories.id"))
-    dataset_type_id = Column(Integer, ForeignKey("dataset_type.id"))
     source_type_id = Column(Integer, ForeignKey("source_type.id"))
 
     year = Column(Integer)
@@ -65,7 +57,6 @@ class Dataset(Base):
     owner = relationship("Source", back_populates="datasets")
     rows = relationship("DataRow", back_populates="dataset", cascade="all, delete-orphan")
     category = relationship("Category", back_populates="datasets")
-    datasetType = relationship("DatasetType", back_populates="datasets")
     sourceType = relationship("SourceType", back_populates="datasets")
 
 class DataRow(Base):
