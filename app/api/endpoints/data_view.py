@@ -57,7 +57,8 @@ def get_catalog(db: Session = Depends(get_db)):
     Melihat daftar seluruh dataset yang sudah berhasil di-upload ke sistem.
     Ini untuk mengisi menu utama atau katalog data pemerintah.
     """
-    datasets = db.query(models.Dataset).all()
+    datasets = db.query(models.Dataset).filter(models.Dataset.status == "approved").all()
+    # datasets = db.query(models.Dataset).all()
     catalog = []
     
     for ds in datasets:

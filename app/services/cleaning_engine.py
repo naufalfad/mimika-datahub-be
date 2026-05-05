@@ -69,40 +69,33 @@ class CleaningEngine:
 
     @staticmethod
     def clean_and_align(file_contents: bytes):
-        # 1. BACA FILE SECARA RAW (Tanpa asumsi header)
         try:
             try:
-                # header=None artinya kita baca semua cell sebagai data mentah
                 df_raw = pd.read_excel(io.BytesIO(file_contents), header=None)
             except:
                 df_raw = pd.read_csv(io.BytesIO(file_contents), header=None)
         except Exception as e:
             raise Exception(f"Format file tidak didukung: {str(e)}")
 
-        # 2. LOGIKA DETEKSI HEADER DINAMIS (Scanning Top-Left)
-        # Mencari baris pertama yang memiliki data paling banyak (asumsi itu header)
-        # atau baris pertama yang tidak kosong.
-        
+        # =========================
+        # 1. DETEKSI HEADER
+        # =========================
         first_row_with_data = 0
         for i, row in df_raw.iterrows():
-            # Jika baris ini memiliki lebih dari 1 kolom yang terisi, kita anggap ini start header
-            if row.count() > 1: 
+            if row.count() > 1:
                 first_row_with_data = i
                 break
-        
-        # Potong dataframe dari baris yang ditemukan
+
         df_raw = df_raw.iloc[first_row_with_data:].reset_index(drop=True)
-        
-        # Jadikan baris pertama tersebut sebagai header
         df_raw.columns = df_raw.iloc[0]
         df = df_raw[1:].reset_index(drop=True)
 
-        # 3. DETEKSI KOLOM KOSONG DI KIRI (Jika mulai dari kolom B, C, dst)
-        # Hapus kolom yang namanya "Unnamed" atau NaN
+        # =========================
+        # 2. BERSIHKAN KOLOM
+        # =========================
         df = df.loc[:, df.columns.notna()]
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed')]
 
-        # 4. PENYELARASAN NAMA HEADER (Snake Case)
         def clean_header_name(col):
             c = str(col).strip().lower()
             c = re.sub(r'[^a-z0-9_]', '_', c)
@@ -110,27 +103,44 @@ class CleaningEngine:
 
         df.columns = [clean_header_name(c) for c in df.columns]
 
-        # 5. MEMBERSIHKAN DATA KOSONG & DUPLIKAT INTERNAL
-        df = df.dropna(how='all') 
+        # =========================
+        # 3. HITUNG BARIS KOSONG (SEBELUM DIHAPUS)
+        # =========================
+        empty_rows_count = df.isna().all(axis=1).sum()
 
-        # 6. PROSES DATA PER BARIS
+        # =========================
+        # 4. HAPUS BARIS KOSONG (BIAR TIDAK MASUK DB)
+        # =========================
+        df = df.dropna(how='all')
+
+        # =========================
+        # 5. PROSES DATA
+        # =========================
         cleaned_records = []
+
         for _, row in df.iterrows():
             row_dict = row.to_dict()
             processed_row = {}
-            
+
             for key, val in row_dict.items():
                 if pd.isna(val):
                     processed_row[key] = None
                     continue
-                
-                numeric_keywords = ['jumlah', 'nilai', 'harga', 'total', 'value', 'biaya', 'realisasi', 'target', 'skor', 'tahun']
+
+                numeric_keywords = [
+                    'jumlah', 'nilai', 'harga', 'total',
+                    'value', 'biaya', 'realisasi',
+                    'target', 'skor', 'tahun'
+                ]
+
                 if any(kw in key for kw in numeric_keywords):
                     processed_row[key] = CleaningEngine.clean_numeric_smart(val)
                 else:
                     processed_row[key] = CleaningEngine.clean_text_smart(val)
 
-            # 7. GENERATE HASH (Anti-Redundan)
+            # =========================
+            # 6. HASH (UNTUK DETEKSI DUPLIKAT)
+            # =========================
             row_json = json.dumps(processed_row, sort_keys=True, default=str)
             row_hash = hashlib.md5(row_json.encode()).hexdigest()
 
@@ -139,12 +149,4 @@ class CleaningEngine:
                 "row_hash": row_hash
             })
 
-        # 8. DEDUPLIKASI FINAL
-        seen_hashes = set()
-        final_records = []
-        for item in cleaned_records:
-            if item["row_hash"] not in seen_hashes:
-                final_records.append(item)
-                seen_hashes.add(item["row_hash"])
-
-        return df.columns.tolist(), final_records
+        return df.columns.tolist(), cleaned_records, int(empty_rows_count)

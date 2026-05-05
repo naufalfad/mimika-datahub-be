@@ -1,7 +1,6 @@
 from sqlalchemy import Column, Integer, Float, String, ForeignKey, DateTime, JSON, Float, Text, Boolean
 from sqlalchemy.orm import relationship
 from app.db.base import Base
-from app.models import models
 import datetime
 
 class Source(Base):
@@ -22,6 +21,22 @@ class Category(Base):
     
     datasets = relationship("Dataset", back_populates="category")
 
+class DatasetType(Base):
+    """Tabel Tipe Dataset (Pemerintah, Non-Pemerintah)"""
+    __tablename__ = "dataset_type"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    
+    datasets = relationship("Dataset", back_populates="datasetType")
+
+class SourceType(Base):
+    """Tabel Jenis Sumber ())"""
+    __tablename__ = "source_type"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    
+    datasets = relationship("Dataset", back_populates="sourceType")
+
 class Dataset(Base):
     """Tabel Metadata File (Judul, Nama Kolom asli)"""
     __tablename__ = "datasets"
@@ -30,6 +45,8 @@ class Dataset(Base):
 
     source_id = Column(Integer, ForeignKey("sources.id"))
     category_id = Column(Integer, ForeignKey("categories.id"))
+    dataset_type_id = Column(Integer, ForeignKey("dataset_type.id"))
+    source_type_id = Column(Integer, ForeignKey("source_type.id"))
 
     year = Column(Integer)
     period = Column(String)
@@ -41,12 +58,15 @@ class Dataset(Base):
     
     # Kita simpan daftar kolom yang sudah dirapikan di sini (misal: ["nama", "tahun", "jumlah"])
     headers = Column(JSON) 
+    status = Column(String, default="pending")
     
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
     owner = relationship("Source", back_populates="datasets")
     rows = relationship("DataRow", back_populates="dataset", cascade="all, delete-orphan")
     category = relationship("Category", back_populates="datasets")
+    datasetType = relationship("DatasetType", back_populates="datasets")
+    sourceType = relationship("SourceType", back_populates="datasets")
 
 class DataRow(Base):
     """Tabel Penampung Isi File yang Sudah Bersih"""

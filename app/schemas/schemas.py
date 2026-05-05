@@ -25,6 +25,24 @@ class SourceOut(SourceBase):
     class Config:
         from_attributes = True
 
+class DatasetTypeCreate(BaseModel):
+    name: str
+
+class DatasetTypeOut(BaseModel):
+    id: int
+    name: str
+    class Config:
+        from_attributes = True
+
+class SourceTypeCreate(BaseModel):
+    name: str
+
+class SourceTypeOut(BaseModel):
+    id: int
+    name: str
+    class Config:
+        from_attributes = True
+
 # Schema untuk Dataset (Judul Tabel)
 class DatasetCreate(BaseModel):
     title: str
@@ -36,6 +54,7 @@ class DatasetCreate(BaseModel):
 
 class DatasetOut(DatasetCreate):
     id: int
+    status: str
     headers: Optional[List[str]] = None
     total_rows: int
     quality_score: float
@@ -44,12 +63,19 @@ class DatasetOut(DatasetCreate):
         from_attributes = True
 
 # Schema untuk Respon Upload
+class Stats(BaseModel):
+    inserted: int
+    duplicates: int
+    empty: int
+    total: int
+    quality_score: float
+
+
 class UploadResponse(BaseModel):
     status: str
     dataset_id: int
-    headers_found: List[str]
-    new_records: int
-    duplicates_ignored: int
+    headers_found: list[str]
+    stats: Stats
 
 class SurveyCreate(BaseModel):
     title: str
