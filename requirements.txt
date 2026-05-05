@@ -1,0 +1,25 @@
+# Web Framework & Server
+fastapi
+uvicorn[standard]
+
+# Database & Migration
+sqlalchemy
+psycopg2-binary
+alembic
+
+# Data Processing (Cleaning Engine)
+# Versi 2.1.0+ agar support fungsi .map() untuk DataFrame
+pandas>=2.1.0
+openpyxl
+numpy
+
+# Security & Authentication (JWT)
+python-jose[cryptography]
+passlib[bcrypt]==1.7.4
+bcrypt==3.2.2
+python-multipart
+
+# Utilities
+pydantic
+pydantic-settings
+python-dotenv
