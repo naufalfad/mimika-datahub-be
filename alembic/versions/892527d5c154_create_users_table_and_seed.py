@@ -27,6 +27,7 @@ def upgrade() -> None:
         sa.Column('hashed_password', sa.String(), nullable=False),
         sa.Column('full_name', sa.String(), nullable=True),
         sa.Column('role', sa.String(), nullable=True),
+        sa.Column('email', sa.String(), nullable=True, unique=True),
         sa.Column('is_active', sa.Boolean(), nullable=True),
         sa.PrimaryKeyConstraint('id')
     )
@@ -35,9 +36,9 @@ def upgrade() -> None:
     # Password admin: admin123
     # Password user: user123
     op.execute(
-        f"INSERT INTO users (username, hashed_password, full_name, role, is_active) VALUES "
-        f"('admin', '{get_password_hash('password123')}', 'Admin', 'admin', true),"
-        f"('user', '{get_password_hash('password123')}', 'Operator OPD', 'user', true)"
+        f"INSERT INTO users (username, hashed_password, full_name, role, email, is_active) VALUES "
+        f"('admin', '{get_password_hash('password123')}', 'Admin', 'admin', admin@gmail.com, true),"
+        f"('user', '{get_password_hash('password123')}', 'Operator OPD', 'user', user@gmail.com, true)"
     )
 
 def downgrade() -> None:
