@@ -33,6 +33,7 @@ class Dataset(Base):
     """Tabel Metadata File (Judul, Nama Kolom asli)"""
     __tablename__ = "datasets"
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
     title = Column(String, nullable=False)
     dataset_type = Column(String)
 
@@ -58,6 +59,7 @@ class Dataset(Base):
     rows = relationship("DataRow", back_populates="dataset", cascade="all, delete-orphan")
     category = relationship("Category", back_populates="datasets")
     sourceType = relationship("SourceType", back_populates="datasets")
+    uploader = relationship("User")
 
 class DataRow(Base):
     """Tabel Penampung Isi File yang Sudah Bersih"""
@@ -106,4 +108,5 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     full_name = Column(String)
     role = Column(String, default="user")
+    email = Column(String, unique=True, index=True)
     is_active = Column(Boolean, default=True)

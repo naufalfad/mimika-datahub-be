@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models import models
 from app.core import security
+from app.api import deps
 
 router = APIRouter()
 
@@ -18,3 +19,8 @@ def login(db: Session = Depends(get_db), form_data: OAuth2PasswordRequestForm = 
         "token_type": "bearer",
         "role": user.role
     }
+
+@router.get("/me", response_model=schemas.UserOut)
+def get_user_profile(current_user: models.User = Depends(deps.get_current_user)):
+    """Mengambil data profil user yang sedang login berdasarkan token"""
+    return current_user

@@ -91,3 +91,11 @@ def export_dataset(dataset_id: int, db: Session = Depends(get_db)):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=mimika_data_clean_{dataset_id}.xlsx"}
     )
+
+@router.get("/my-datasets", response_model=List[schemas.DatasetOut])
+def get_my_datasets(
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)
+):
+    """Mengambil dataset yang diupload oleh user yang sedang login"""
+    return db.query(models.Dataset).filter(models.Dataset.user_id == current_user.id).all()

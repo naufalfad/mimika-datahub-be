@@ -47,6 +47,7 @@ class DatasetCreate(BaseModel):
 
 class DatasetOut(DatasetCreate):
     id: int
+    user_id: Optional[int]
     status: str
     headers: Optional[List[str]] = None
     total_rows: int
@@ -82,3 +83,12 @@ class SurveyResponseCreate(BaseModel):
     survey_id: int
     answers: Dict[str, Any]
 
+class UserOut(BaseModel):
+    id: int
+    username: str
+    full_name: Optional[str]
+    email: Optional[str] # Tambah ini
+    role: str
+    is_active: bool
+    class Config:
+        from_attributes = True
