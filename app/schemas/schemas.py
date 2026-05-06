@@ -83,12 +83,25 @@ class SurveyResponseCreate(BaseModel):
     survey_id: int
     answers: Dict[str, Any]
 
-class UserOut(BaseModel):
-    id: int
+# --- USER SCHEMAS ---
+class UserBase(BaseModel):
     username: str
-    full_name: Optional[str]
-    email: Optional[str] # Tambah ini
-    role: str
-    is_active: bool
+    email: str
+    full_name: str
+    role: str = "user" # 'admin' atau 'user'
+    is_active: bool = True
+
+class UserCreate(UserBase):
+    password: str
+
+class UserUpdate(BaseModel):
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    password: Optional[str] = None # Opsional, diisi jika ingin ganti password
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class UserOut(UserBase):
+    id: int
     class Config:
         from_attributes = True
