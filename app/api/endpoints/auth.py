@@ -5,6 +5,7 @@ from app.db.session import get_db
 from app.models import models
 from app.core import security
 from app.api import deps
+from app.schemas import schemas
 
 router = APIRouter()
 
