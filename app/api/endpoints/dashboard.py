@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import extract
+from sqlalchemy import func, extract
 from datetime import datetime
 from app.db.session import get_db
 from sqlalchemy.orm import Session
@@ -23,8 +23,7 @@ def get_dashboard_main_stats(db: Session = Depends(get_db)):
     popular_datasets = db.query(models.Dataset).filter(models.Dataset.status == "approved")\
                          .order_by(models.Dataset.view_count.desc()).limit(5).all()
 
-    # 4. Tren Quality Score Per Bulan (6 bulan terakhir)
-    # Query ini mengambil rata-rata skor kualitas dikelompokkan per bulan
+    # 4. Tren Quality Score Per Bulan
     trend_query = db.query(
         extract('month', models.Dataset.created_at).label('month'),
         func.avg(models.Dataset.quality_score).label('avg_score')
@@ -33,25 +32,30 @@ def get_dashboard_main_stats(db: Session = Depends(get_db)):
     
     quality_trend = [{"bulan": int(t.month), "skor": round(float(t.avg_score), 2)} for t in trend_query]
 
-    # 5. Status Kirim OPD Bulan Ini (Target 12 per bulan)
+    # 5. PERBAIKAN: Status Kirim OPD berdasarkan USER bulan ini (Target 12 per bulan)
     current_month = datetime.now().month
     current_year = datetime.now().year
     
     opd_status = []
-    sources = db.query(models.Source).all()
+    # Ambil semua user dengan role 'user' (Operator OPD)
+    users_opd = db.query(models.User).filter(models.User.role == "user").all()
     
-    for s in sources:
+    for u in users_opd:
+        # Hitung upload berdasarkan user_id
         upload_count = db.query(models.Dataset).filter(
-            models.Dataset.source_id == s.id,
+            models.Dataset.user_id == u.id,
             extract('month', models.Dataset.created_at) == current_month,
             extract('year', models.Dataset.created_at) == current_year
         ).count()
         
         target = 12
+        # Hitung persentase kepatuhan
         persentase = round((upload_count / target) * 100, 2)
+        if persentase > 100: persentase = 100 # Maksimal 100%
         
         opd_status.append({
-            "opd_name": s.name,
+            "opd_name": u.full_name, # Sekarang mengambil dari full_name di tabel User
+            "username": u.username,
             "terkirim": upload_count,
             "target": target,
             "persentase": f"{persentase}%",
