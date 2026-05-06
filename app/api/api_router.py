@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.endpoints import categories, sources, datasets, data_ingest, data_view, dashboard, brida, auth, dataset_type, source_type
+from app.api.endpoints import categories, sources, datasets, data_ingest, data_view, dashboard, brida, auth, source_type
 
 api_router = APIRouter()
 
