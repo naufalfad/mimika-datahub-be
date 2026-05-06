@@ -8,79 +8,38 @@ from fastapi.responses import StreamingResponse
 from app.services.export_engine import ExportEngine
 from app.api.deps import get_current_user
 
+import io
+
 router = APIRouter()
 
-@router.get("/preview/{dataset_id}")
-def preview_clean_data(
+@router.get("/content/{dataset_id}")
+def get_dataset_content(
     dataset_id: int, 
-    page: int = Query(1, ge=1, description="Nomor halaman"),
-    limit: int = Query(50, ge=1, le=100, description="Jumlah baris per halaman"),
+    limit: int = 100, # Batasi 100 baris untuk preview agar ringan
     db: Session = Depends(get_db)
 ):
     """
-    Mengambil data yang sudah bersih dari satu dataset tertentu.
-    Sudah mendukung paginasi (pagination) agar tidak membebani browser.
+    Mengambil isi data bersih (data_rows) untuk preview tabel seperti Excel.
     """
-    # 1. Ambil Metadata Dataset
+    # 1. Ambil info dataset untuk dapetin headernya
     dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
     if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset ID tidak ditemukan")
+        raise HTTPException(status_code=404, detail="Dataset tidak ditemukan")
 
+    # 2. Ambil baris datanya
+    rows = db.query(models.DataRow).filter(models.DataRow.dataset_id == dataset_id).limit(limit).all()
+    
+    # 3. Increment view count (karena data sedang diakses/dilihat)
     dataset.view_count += 1
     db.commit()
 
-    # 2. Ambil Nama Source (OPD) untuk info tambahan di dashboard
-    source = db.query(models.Source).filter(models.Source.id == dataset.source_id).first()
-    source_name = source.name if source else "Unknown"
-
-    # 3. Ambil data baris dengan paginasi
-    offset = (page - 1) * limit
-    rows = db.query(models.DataRow).filter(
-        models.DataRow.dataset_id == dataset_id
-    ).offset(offset).limit(limit).all()
-
-    # 4. Total Baris (untuk info paginasi di frontend)
-    total_rows = db.query(models.DataRow).filter(models.DataRow.dataset_id == dataset_id).count()
-
-    # 5. Ekstrak 'content' dari setiap baris
-    clean_data = [r.content for r in rows]
-
+    # 4. Susun respon agar frontend tinggal render <thead> dan <tbody>
     return {
-        "dataset_id": dataset.id,
         "title": dataset.title,
-        "source_name": source_name,
-        "headers": dataset.headers,  # Daftar kolom yang sudah rapi
-        "total_records": total_rows,
-        "current_page": page,
-        "total_pages": (total_rows + limit - 1) // limit,
-        "data": clean_data  # Isi data baris per baris
+        "type": dataset.dataset_type,
+        "headers": dataset.headers,  # Contoh: ["nama_distrik", "jumlah_penduduk"]
+        "rows": [r.content for r in rows] # Contoh: [{"nama_distrik": "Mimika Baru", "jumlah_penduduk": 1000}, ...]
     }
-
-@router.get("/catalog")
-def get_catalog(db: Session = Depends(get_db)):
-    """
-    Melihat daftar seluruh dataset yang sudah berhasil di-upload ke sistem.
-    Ini untuk mengisi menu utama atau katalog data pemerintah.
-    """
-    datasets = db.query(models.Dataset).filter(models.Dataset.status == "approved").all()
-    # datasets = db.query(models.Dataset).all()
-    catalog = []
-    
-    for ds in datasets:
-        source = db.query(models.Source).filter(models.Source.id == ds.source_id).first()
-        row_count = db.query(models.DataRow).filter(models.DataRow.dataset_id == ds.id).count()
-        
-        catalog.append({
-            "id": ds.id,
-            "title": ds.title,
-            "source_name": source.name if source else "Unknown",
-            "source_type": source.type if source else "Unknown",
-            "columns": ds.headers,
-            "total_records": row_count,
-            "created_at": ds.created_at.strftime("%Y-%m-%d %H:%M:%S") if ds.created_at else None
-        })
-        
-    return catalog
 
 @router.get("/export/{dataset_id}")
 def export_dataset(dataset_id: int, db: Session = Depends(get_db)):
