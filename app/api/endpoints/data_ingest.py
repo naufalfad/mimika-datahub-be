@@ -34,7 +34,8 @@ async def upload_and_process_form(
         year=year,
         period=period,
         description=description,
-        status=initial_status
+        status=initial_status,
+        user_id=current_user.id
     )
     db.add(new_dataset)
     db.commit()

@@ -24,6 +24,9 @@ def preview_clean_data(
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset ID tidak ditemukan")
 
+    dataset.view_count += 1
+    db.commit()
+
     # 2. Ambil Nama Source (OPD) untuk info tambahan di dashboard
     source = db.query(models.Source).filter(models.Source.id == dataset.source_id).first()
     source_name = source.name if source else "Unknown"
@@ -99,3 +102,37 @@ def get_my_datasets(
 ):
     """Mengambil dataset yang diupload oleh user yang sedang login"""
     return db.query(models.Dataset).filter(models.Dataset.user_id == current_user.id).all()
+
+@router.get("/export-list")
+def export_dataset_list(
+    dataset_type: str, # 'pemerintah' atau 'non-pemerintah'
+    file_format: str = "excel", # 'excel' atau 'csv'
+    db: Session = Depends(get_db)
+):
+    datasets = db.query(models.Dataset).filter(
+        models.Dataset.dataset_type == dataset_type,
+        models.Dataset.status == "approved"
+    ).all()
+    
+    # Format data untuk excel
+    data_to_export = []
+    for d in datasets:
+        data_to_export.append({
+            "ID": d.id,
+            "Judul Dataset": d.title,
+            "Tahun": d.year,
+            "Periode": d.period,
+            "Total Baris": d.total_rows,
+            "Skor Kualitas": f"{d.quality_score}%",
+            "Uploader ID": d.user_id,
+            "Tanggal Dibuat": d.created_at.strftime("%Y-%m-%d")
+        })
+
+    if file_format == "csv":
+        csv_data = ExportEngine.list_to_csv(data_to_export)
+        return StreamingResponse(io.BytesIO(csv_data), media_type="text/csv", 
+                                headers={"Content-Disposition": f"attachment; filename=list_{dataset_type}.csv"})
+    
+    excel_file = ExportEngine.list_to_excel(data_to_export, "Datasets")
+    return StreamingResponse(excel_file, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            headers={"Content-Disposition": f"attachment; filename=list_{dataset_type}.xlsx"})

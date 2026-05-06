@@ -44,6 +44,7 @@ class Dataset(Base):
     year = Column(Integer)
     period = Column(String)
     description = Column(Text)
+    view_count = Column(Integer, default=0)
 
     total_rows = Column(Integer, default=0)
     quality_score = Column(Float, default=0.0) # Skor 0-100

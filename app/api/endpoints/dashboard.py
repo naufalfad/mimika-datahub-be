@@ -1,43 +1,71 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import extract
+from datetime import datetime
 from app.db.session import get_db
 from app.models import models
 
 router = APIRouter()
 
-@router.get("/stats")
-def get_global_stats(db: Session = Depends(get_db)):
-    """Memberikan ringkasan data untuk kartu statistik di Dashboard utama"""
+@router.get("/main-stats")
+def get_dashboard_main_stats(db: Session = Depends(get_db)):
+    # 1. Kartu Statistik
+    total_datasets = db.query(models.Dataset).filter(models.Dataset.status == "approved").count()
     total_sources = db.query(models.Source).count()
-    total_datasets = db.query(models.Dataset).count()
-    total_rows = db.query(func.sum(models.Dataset.total_rows)).scalar() or 0
-    avg_quality = db.query(func.avg(models.Dataset.quality_score)).scalar() or 0
-    
-    return {
-        "summary": {
-            "total_sources": total_sources,
-            "total_datasets": total_datasets,
-            "total_records": total_rows,
-            "avg_system_quality": f"{round(avg_quality, 2)}%"
-        }
-    }
+    active_users = db.query(models.User).filter(models.User.is_active == True).count()
+    avg_quality = db.query(func.avg(models.Dataset.quality_score)).filter(models.Dataset.status == "approved").scalar() or 0
 
-@router.get("/source-performance")
-def get_source_performance(db: Session = Depends(get_db)):
-    """Melihat performa upload per OPD (Sesuai mockup monitoring-opd.html)"""
+    # 2. Dataset Terbaru (5 terakhir)
+    recent_datasets = db.query(models.Dataset).filter(models.Dataset.status == "approved")\
+                        .order_by(models.Dataset.created_at.desc()).limit(5).all()
+
+    # 3. Dataset Populer (Berdasarkan view_count terbanyak)
+    popular_datasets = db.query(models.Dataset).filter(models.Dataset.status == "approved")\
+                         .order_by(models.Dataset.view_count.desc()).limit(5).all()
+
+    # 4. Tren Quality Score Per Bulan (6 bulan terakhir)
+    # Query ini mengambil rata-rata skor kualitas dikelompokkan per bulan
+    trend_query = db.query(
+        extract('month', models.Dataset.created_at).label('month'),
+        func.avg(models.Dataset.quality_score).label('avg_score')
+    ).filter(models.Dataset.status == "approved")\
+     .group_by('month').order_by('month').all()
+    
+    quality_trend = [{"bulan": int(t.month), "skor": round(float(t.avg_score), 2)} for t in trend_query]
+
+    # 5. Status Kirim OPD Bulan Ini (Target 12 per bulan)
+    current_month = datetime.now().month
+    current_year = datetime.now().year
+    
+    opd_status = []
     sources = db.query(models.Source).all()
-    performance = []
     
     for s in sources:
-        datasets_count = db.query(models.Dataset).filter(models.Dataset.source_id == s.id).count()
-        avg_q = db.query(func.avg(models.Dataset.quality_score)).filter(models.Dataset.source_id == s.id).scalar() or 0
+        upload_count = db.query(models.Dataset).filter(
+            models.Dataset.source_id == s.id,
+            extract('month', models.Dataset.created_at) == current_month,
+            extract('year', models.Dataset.created_at) == current_year
+        ).count()
         
-        performance.append({
-            "source_name": s.name,
-            "total_datasets": datasets_count,
-            "average_quality": f"{round(avg_q, 2)}%",
-            "status": "Aktif" if datasets_count > 0 else "Belum Upload"
+        target = 12
+        persentase = round((upload_count / target) * 100, 2)
+        
+        opd_status.append({
+            "opd_name": s.name,
+            "terkirim": upload_count,
+            "target": target,
+            "persentase": f"{persentase}%",
+            "status": "Lengkap" if upload_count >= target else "Belum Lengkap"
         })
-        
-    return performance
+
+    return {
+        "cards": {
+            "total_dataset": total_datasets,
+            "total_sumber": total_sources,
+            "user_aktif": active_users,
+            "rata_rata_kualitas": f"{round(float(avg_quality), 2)}%"
+        },
+        "recent": recent_datasets,
+        "popular": popular_datasets,
+        "quality_trend": quality_trend,
+        "opd_monthly_monitoring": opd_status
+    }
