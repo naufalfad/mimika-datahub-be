@@ -15,6 +15,10 @@ from app.api.api_router import api_router
 #     print(f"Gagal membuat tabel: {e}")
 
 app = FastAPI(title="Mimika DataHub - Versi 1")
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 
 # Setting CORS
 app.add_middleware(
