@@ -25,3 +25,16 @@ def login(db: Session = Depends(get_db), form_data: OAuth2PasswordRequestForm = 
 def get_user_profile(current_user: models.User = Depends(deps.get_current_user)):
     """Mengambil data profil user yang sedang login berdasarkan token"""
     return current_user
+
+@router.post("/logout")
+def logout(current_user: models.User = Depends(deps.get_current_user)):
+    """
+    Endpoint Logout.
+    Karena menggunakan JWT, logout dilakukan dengan cara:
+    1. Backend memberikan respon sukses.
+    2. Frontend HARUS menghapus token dari local storage/cookies.
+    """
+    return {
+        "status": "success", 
+        "message": f"User {current_user.username} berhasil logout."
+    }
