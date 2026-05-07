@@ -105,3 +105,21 @@ class UserOut(UserBase):
     id: int
     class Config:
         from_attributes = True
+
+# --- MONITORING SCHEMAS ---
+class OPDMonitoringDetail(BaseModel):
+    user_id: int
+    opd_name: str
+    last_submit: Optional[datetime] = None
+    status: str # 'Lengkap', 'Kurang', 'Belum Kirim'
+    progress: str # 'n/12'
+    upload_count: int
+    avg_quality: float
+    email: Optional[str]
+    username: str
+
+class MonitoringSummaryResponse(BaseModel):
+    cards: Dict[str, Any]
+    pie_chart: Dict[str, int]
+    line_chart: List[Dict[str, Any]]
+    table_data: List[OPDMonitoringDetail]

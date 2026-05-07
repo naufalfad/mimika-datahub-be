@@ -6,8 +6,9 @@ from app.schemas import schemas
 from typing import List, Optional
 from fastapi.responses import StreamingResponse
 from app.services.export_engine import ExportEngine
-from app.api.deps import get_current_user
+from app.api import deps
 
+import csv
 import io
 
 router = APIRouter()
@@ -59,7 +60,7 @@ def export_dataset(dataset_id: int, db: Session = Depends(get_db)):
 @router.get("/my-datasets", response_model=List[schemas.DatasetOut])
 def get_my_datasets(
     db: Session = Depends(get_db), 
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(deps.get_current_user)
 ):
     """Mengambil dataset yang diupload oleh user yang sedang login"""
     return db.query(models.Dataset).filter(models.Dataset.user_id == current_user.id).all()
@@ -97,3 +98,34 @@ def export_dataset_list(
     excel_file = ExportEngine.list_to_excel(data_to_export, "Datasets")
     return StreamingResponse(excel_file, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             headers={"Content-Disposition": f"attachment; filename=list_{dataset_type}.xlsx"})
+
+@router.get("/export-monitoring-csv")
+def export_monitoring_csv(db: Session = Depends(get_db), admin: models.User = Depends(deps.get_admin_user)):
+    # Re-use logika dari summary (atau panggil fungsi internal)
+    # Untuk singkatnya, kita ambil data user role 'user'
+    users_opd = db.query(models.User).filter(models.User.role == "user").all()
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Nama OPD", "Email", "Progress", "Status", "Rerata Kualitas"])
+
+    now = datetime.now()
+    for u in users_opd:
+        count = db.query(models.Dataset).filter(
+            models.Dataset.user_id == u.id,
+            extract('month', models.Dataset.created_at) == now.month,
+            extract('year', models.Dataset.created_at) == now.year,
+            models.Dataset.status == "approved"
+        ).count()
+        
+        status = "Lengkap" if count >= 12 else "Kurang" if count > 0 else "Belum Kirim"
+        avg_q = db.query(func.avg(models.Dataset.quality_score)).filter(models.Dataset.user_id == u.id).scalar() or 0
+        
+        writer.writerow([u.full_name, u.email, f"{count}/12", status, f"{round(float(avg_q), 2)}%"])
+
+    output.seek(0)
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode()),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=monitoring_opd.csv"}
+    )
