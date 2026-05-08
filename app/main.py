@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.session import engine, Base
 from app.api.api_router import api_router
+from fastapi.staticfiles import StaticFiles
+import os
 
 # PENTING: Impor models di sini agar SQLAlchemy mengenali tabel-tabelnya
 # from app.models import models 
@@ -15,6 +17,11 @@ from app.api.api_router import api_router
 #     print(f"Gagal membuat tabel: {e}")
 
 app = FastAPI(title="Mimika DataHub - Versi 1")
+
+if not os.path.exists("static"):
+    os.makedirs("static")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",

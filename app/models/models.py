@@ -9,7 +9,6 @@ class Source(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)
     type = Column(String) # bps, opd, kementerian, dll
-    icon = Column(String, default="fa-database")
     
     datasets = relationship("Dataset", back_populates="owner")
 
@@ -18,6 +17,7 @@ class Category(Base):
     __tablename__ = "categories"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)
+    image_url = Column(String, nullable=True)
     
     datasets = relationship("Dataset", back_populates="category")
 

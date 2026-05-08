@@ -8,6 +8,7 @@ class CategoryCreate(BaseModel):
 class CategoryOut(BaseModel):
     id: int
     name: str
+    image_url: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -53,6 +54,8 @@ class DatasetOut(DatasetCreate):
     total_rows: int
     quality_score: float
     created_at: datetime
+    category: CategoryOut
+    sourceType: SourceTypeOut
     class Config:
         from_attributes = True
 
@@ -123,3 +126,14 @@ class MonitoringSummaryResponse(BaseModel):
     pie_chart: Dict[str, int]
     line_chart: List[Dict[str, Any]]
     table_data: List[OPDMonitoringDetail]
+
+class FilterItem(BaseModel):
+    id: int
+    name: str
+    count: int
+
+class SidebarStats(BaseModel):
+    categories: List[FilterItem]
+    sources: List[FilterItem]
+    source_types: List[FilterItem]
+    years: List[FilterItem]
