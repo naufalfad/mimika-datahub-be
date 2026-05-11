@@ -5,6 +5,9 @@ from app.models import models
 from app.schemas import schemas
 from app.services.cleaning_engine import CleaningEngine
 from app.api.deps import get_current_user
+from app.core.cloudinary_config import upload_image_to_cloudinary
+import json
+import hashlib
 
 router = APIRouter()
 
@@ -18,10 +21,39 @@ async def upload_and_process_form(
     year: int = Form(...),
     period: str = Form(...),
     description: str = Form(None),
-    file: UploadFile = File(...), 
+    file: UploadFile = File(...),
+    image: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+
+    category = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not category or not category.template_url:
+        raise HTTPException(status_code=400, detail="Kategori tidak ditemukan atau belum memiliki template gambar")
+
+    # 2. PROSES UPLOAD GAMBAR USER
+    try:
+        image_bytes = await image.read()
+        # Folder akan otomatis terbuat di Cloudinary: mimika_datahub/user_uploads
+        photo_url, photo_public_id = upload_image_to_cloudinary(
+            image_bytes, 
+            folder_name="mimika_datahub/user_uploads"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal upload gambar: {str(e)}")
+
+    # try:
+    #     # Teknik extract public_id dari URL (mengambil path folder + nama file)
+    #     parts = category.template_url.split('/upload/')[-1].split('/')
+    #     # Gabungkan folder dan nama file, ganti '/' menjadi ':' sesuai aturan Cloudinary overlay
+    #     template_id_raw = "/".join(parts[1:]) # menghilangkan versi 'v12345/'
+    #     template_public_id = template_id_raw.split('.')[0].replace('/', ':')
+
+    #     # Generate Merged URL: Bingkai (u_...) diletakkan di atas Foto User
+    #     cloud_name = "drcgddki1"
+    #     merged_url = f"https://res.cloudinary.com/{cloud_name}/image/upload/u_{template_public_id},fl_relative,w_1.0,h_1.0/{photo_public_id}.png"
+    # except:
+    #     merged_url = photo_url # Fallback jika gagal generate
 
     initial_status = "approved" if current_user.role == "admin" else "pending"
     # 1. Simpan metadata dataset
@@ -35,7 +67,9 @@ async def upload_and_process_form(
         period=period,
         description=description,
         status=initial_status,
-        user_id=current_user.id
+        user_id=current_user.id,
+        image_url=photo_url,
+        # merged_image_url=merged_url
     )
     db.add(new_dataset)
     db.commit()

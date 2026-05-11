@@ -17,7 +17,7 @@ class Category(Base):
     __tablename__ = "categories"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)
-    image_url = Column(String, nullable=True)
+    template_url = Column(String, nullable=True)
     
     datasets = relationship("Dataset", back_populates="category")
 
@@ -45,6 +45,8 @@ class Dataset(Base):
     period = Column(String)
     description = Column(Text)
     view_count = Column(Integer, default=0)
+    image_url = Column(String, nullable=True)
+    # merged_image_url = Column(String, nullable=True)
 
     total_rows = Column(Integer, default=0)
     quality_score = Column(Float, default=0.0) # Skor 0-100
