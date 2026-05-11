@@ -137,3 +137,15 @@ class SidebarStats(BaseModel):
     sources: List[FilterItem]
     source_types: List[FilterItem]
     years: List[FilterItem]
+
+class DatasetRecentOut(BaseModel):
+    id: int
+    title: str
+    image_url: Optional[str]
+    template_url: Optional[str] # Diambil dari relasi kategori
+    category_name: str
+    source_name: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

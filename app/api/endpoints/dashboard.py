@@ -4,6 +4,8 @@ from datetime import datetime
 from app.db.session import get_db
 from sqlalchemy.orm import Session
 from app.models import models
+from app.schemas import schemas
+from typing import List
 
 router = APIRouter()
 
@@ -74,3 +76,32 @@ def get_dashboard_main_stats(db: Session = Depends(get_db)):
         "quality_trend": quality_trend,
         "opd_monthly_monitoring": opd_status
     }
+
+@router.get("/recent-with-templates", response_model=List[schemas.DatasetRecentOut])
+def get_recent_datasets_with_templates(db: Session = Depends(get_db)):
+    """
+    Mengambil 5 dataset terbaru yang sudah approved 
+    beserta template_url kategori untuk kebutuhan layering foto (twibbon).
+    """
+    # Query dengan Join ke Category dan Source
+    results = db.query(models.Dataset).filter(
+        models.Dataset.status == "approved"
+    ).order_by(
+        models.Dataset.created_at.desc()
+    ).limit(5).all()
+
+    recent_list = []
+    for ds in results:
+        # Ambil nama kategori dan template_url dari relasi
+        # Ambil nama source (OPD) dari relasi
+        recent_list.append({
+            "id": ds.id,
+            "title": ds.title,
+            "image_url": ds.image_url,
+            "template_url": ds.category.template_url if ds.category else None,
+            "category_name": ds.category.name if ds.category else "Umum",
+            "source_name": ds.owner.name if ds.owner else "Unknown",
+            "created_at": ds.created_at
+        })
+
+    return recent_list
