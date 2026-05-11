@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, extract, over
 from datetime import datetime
 from app.db.session import get_db
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 from app.models import models
 from app.schemas import schemas
 from typing import List, Dict
@@ -97,17 +97,18 @@ def get_latest_datasets_per_category(db: Session = Depends(get_db)):
 
     # 2. Filter hasil subquery (hanya ambil urutan 1 sampai 5 per kategori)
     # Dan join dengan Category untuk mendapatkan template_url
-    query = db.query(models.Dataset).select_entity_from(subquery).filter(
-        subquery.c.rn <= 5
-    ).join(models.Category, models.Dataset.category_id == models.Category.id)
+    dataset_alias = aliased(models.Dataset, subquery)
 
-    results = query.all()
+    results = db.query(dataset_alias).filter(
+        subquery.c.rn <= 5
+    ).all()
 
     # 3. Kelompokkan data agar Frontend mudah memakainya
     # Format: { "Nama Kategori": [list dataset], ... }
     grouped_data = {}
     
     for ds in results:
+        # Karena kita join, kita bisa akses relasi kategori
         cat_name = ds.category.name if ds.category else "Umum"
         template = ds.category.template_url if ds.category else None
         
