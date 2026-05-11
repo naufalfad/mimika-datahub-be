@@ -81,7 +81,7 @@ def get_dashboard_main_stats(db: Session = Depends(get_db)):
 def get_latest_datasets_per_category(db: Session = Depends(get_db)):
     """
     Mengambil maksimal 5 dataset terbaru untuk SETIAP kategori.
-    Cocok untuk tampilan section/carousel per kategori di dashboard.
+    Termasuk informasi Source, Source Type, Description, Year, dan Dataset Type.
     """
     
     # 1. Buat Subquery dengan Window Function (ROW_NUMBER)
@@ -95,23 +95,24 @@ def get_latest_datasets_per_category(db: Session = Depends(get_db)):
         ).label("rn")
     ).filter(models.Dataset.status == "approved").subquery()
 
-    # 2. Filter hasil subquery (hanya ambil urutan 1 sampai 5 per kategori)
-    # Dan join dengan Category untuk mendapatkan template_url
+    # 2. Gunakan aliased untuk memetakan subquery kembali ke Model Dataset
     dataset_alias = aliased(models.Dataset, subquery)
 
+    # 3. Eksekusi query: Ambil urutan 1 sampai 5 per kategori
+    # Kita batasi rn <= 5 sesuai permintaan awal Anda
     results = db.query(dataset_alias).filter(
-        subquery.c.rn <= 5
+        subquery.c.rn <= 1
     ).all()
 
-    # 3. Kelompokkan data agar Frontend mudah memakainya
-    # Format: { "Nama Kategori": [list dataset], ... }
+    # 4. Kelompokkan data agar Frontend mudah memakainya
     grouped_data = {}
     
     for ds in results:
-        # Karena kita join, kita bisa akses relasi kategori
+        # Ambil data kategori
         cat_name = ds.category.name if ds.category else "Umum"
         template = ds.category.template_url if ds.category else None
         
+        # Inisialisasi grup kategori jika belum ada
         if cat_name not in grouped_data:
             grouped_data[cat_name] = {
                 "category_info": {
@@ -121,12 +122,19 @@ def get_latest_datasets_per_category(db: Session = Depends(get_db)):
                 "datasets": []
             }
             
+        # 5. Tambahkan dataset dengan informasi lengkap
         grouped_data[cat_name]["datasets"].append({
             "id": ds.id,
             "title": ds.title,
+            "description": ds.description,
+            "year": ds.year,
+            "dataset_type": ds.dataset_type, # 'pemerintah' / 'non-pemerintah'
             "image_url": ds.image_url,
+            "created_at": ds.created_at,
+            # Data dari relasi Source (owner)
+            "source_id": ds.source_id,
             "source_name": ds.owner.name if ds.owner else "Unknown",
-            "created_at": ds.created_at
+            "source_type": ds.category.name if ds.category else "Unknown", # Misalnya: 'opd', 'bps', dll
         })
 
     return grouped_data
