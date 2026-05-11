@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, extract
+from sqlalchemy import func, extract, over
 from datetime import datetime
 from app.db.session import get_db
 from sqlalchemy.orm import Session
 from app.models import models
 from app.schemas import schemas
-from typing import List
+from typing import List, Dict
 
 router = APIRouter()
 
@@ -77,31 +77,55 @@ def get_dashboard_main_stats(db: Session = Depends(get_db)):
         "opd_monthly_monitoring": opd_status
     }
 
-@router.get("/recent-with-templates", response_model=List[schemas.DatasetRecentOut])
-def get_recent_datasets_with_templates(db: Session = Depends(get_db)):
+@router.get("/latest-by-category")
+def get_latest_datasets_per_category(db: Session = Depends(get_db)):
     """
-    Mengambil 5 dataset terbaru yang sudah approved 
-    beserta template_url kategori untuk kebutuhan layering foto (twibbon).
+    Mengambil maksimal 5 dataset terbaru untuk SETIAP kategori.
+    Cocok untuk tampilan section/carousel per kategori di dashboard.
     """
-    # Query dengan Join ke Category dan Source
-    results = db.query(models.Dataset).filter(
-        models.Dataset.status == "approved"
-    ).order_by(
-        models.Dataset.created_at.desc()
-    ).limit(5).all()
+    
+    # 1. Buat Subquery dengan Window Function (ROW_NUMBER)
+    # Kita mengelompokkan (partition) berdasarkan category_id 
+    # dan mengurutkan berdasarkan tanggal terbaru.
+    subquery = db.query(
+        models.Dataset,
+        func.row_number().over(
+            partition_by=models.Dataset.category_id,
+            order_by=models.Dataset.created_at.desc()
+        ).label("rn")
+    ).filter(models.Dataset.status == "approved").subquery()
 
-    recent_list = []
+    # 2. Filter hasil subquery (hanya ambil urutan 1 sampai 5 per kategori)
+    # Dan join dengan Category untuk mendapatkan template_url
+    query = db.query(models.Dataset).select_entity_from(subquery).filter(
+        subquery.c.rn <= 5
+    ).join(models.Category, models.Dataset.category_id == models.Category.id)
+
+    results = query.all()
+
+    # 3. Kelompokkan data agar Frontend mudah memakainya
+    # Format: { "Nama Kategori": [list dataset], ... }
+    grouped_data = {}
+    
     for ds in results:
-        # Ambil nama kategori dan template_url dari relasi
-        # Ambil nama source (OPD) dari relasi
-        recent_list.append({
+        cat_name = ds.category.name if ds.category else "Umum"
+        template = ds.category.template_url if ds.category else None
+        
+        if cat_name not in grouped_data:
+            grouped_data[cat_name] = {
+                "category_info": {
+                    "name": cat_name,
+                    "template_url": template
+                },
+                "datasets": []
+            }
+            
+        grouped_data[cat_name]["datasets"].append({
             "id": ds.id,
             "title": ds.title,
             "image_url": ds.image_url,
-            "template_url": ds.category.template_url if ds.category else None,
-            "category_name": ds.category.name if ds.category else "Umum",
             "source_name": ds.owner.name if ds.owner else "Unknown",
             "created_at": ds.created_at
         })
 
-    return recent_list
+    return grouped_data
