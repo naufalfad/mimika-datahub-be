@@ -52,12 +52,15 @@ class SpatialService:
             .all()
         )
 
-        # 4. Restrukturisasi hasil ke format Hash Map (Key-Value Dictionary)
-        # Format ini menargetkan kompleksitas O(1) di iterasi map frontend.
-        # Output: {"Mimika Baru": 150, "Wania": 85, "Agimuga": 0, ...}
-        formatted_response = {
-            row.district_name: row.total_data for row in query_results
-        }
+        # 4. Restrukturisasi hasil ke format Array of Objects
+        # Output: [{"district_name": "Mimika Baru", "total_dataset": 150}, ...]
+        formatted_response = [
+            {
+                "district_name": row.district_name,
+                "total_dataset": row.total_data or 0
+            }
+            for row in query_results
+        ]
 
         return formatted_response
 
