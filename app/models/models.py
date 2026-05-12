@@ -1,7 +1,15 @@
-from sqlalchemy import Column, Integer, Float, String, ForeignKey, DateTime, JSON, Float, Text, Boolean
+from sqlalchemy import Column, Integer, Float, String, ForeignKey, DateTime, JSON, Text, Boolean
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 import datetime
+
+class District(Base):
+    """Tabel Master Distrik (Wilayah Administratif Kabupaten Mimika)"""
+    __tablename__ = "districts"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True, nullable=False)
+    
+    datasets = relationship("Dataset", back_populates="district")
 
 class Source(Base):
     """Tabel OPD atau Sumber Data (BPS, Dinas Kesehatan, dll)"""
@@ -40,6 +48,10 @@ class Dataset(Base):
     source_id = Column(Integer, ForeignKey("sources.id"))
     category_id = Column(Integer, ForeignKey("categories.id"))
     source_type_id = Column(Integer, ForeignKey("source_type.id"))
+    
+    # Penambahan Foreign Key untuk Relasi Spasial (GIS)
+    # nullable=True agar dataset tingkat Kabupaten (non-distrik) tetap dapat disimpan
+    district_id = Column(Integer, ForeignKey("districts.id"), nullable=True)
 
     year = Column(Integer)
     period = Column(String)
@@ -61,6 +73,9 @@ class Dataset(Base):
     category = relationship("Category", back_populates="datasets")
     sourceType = relationship("SourceType", back_populates="datasets")
     uploader = relationship("User")
+    
+    # Penambahan Relationship ke entitas District
+    district = relationship("District", back_populates="datasets")
 
 class DataRow(Base):
     """Tabel Penampung Isi File yang Sudah Bersih"""

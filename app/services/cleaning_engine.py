@@ -68,6 +68,39 @@ class CleaningEngine:
             return str(val).strip() # Balikkan string jika gagal konversi
 
     @staticmethod
+    def normalize_district_name(val: any) -> str:
+        """
+        Lexical Normalizer: Menormalisasi tipografi nama distrik/kecamatan.
+        Membuang prefiks yang tidak perlu dan mencocokkan dengan kamus 18 Distrik Mimika.
+        """
+        if pd.isna(val) or val is None or str(val).strip() == "":
+            return None
+            
+        text = str(val).strip().lower()
+        
+        # 1. Strip Prefiks Umum (Misal: "Kec.", "Kecamatan", "Distrik", "Wilayah")
+        text = re.sub(r'^(kecamatan|kec\.|distrik|wilayah)\s*', '', text).strip()
+        
+        # 2. Kamus Absolut 18 Distrik di Mimika (Sesuai rujukan spasial GeoJSON)
+        master_districts = [
+            "Mimika Baru", "Kuala Kencana", "Tembagapura", "Wania", "Iwaka",
+            "Kwamki Narama", "Mimika Timur", "Mimika Tengah", "Mimika Barat",
+            "Agimuga", "Jila", "Jita", "Mimika Timur Jauh", "Mimika Barat Jauh",
+            "Mimika Barat Tengah", "Amar", "Hoya", "Alama"
+        ]
+        
+        # 3. Fuzzy Matching Sederhana (Abaikan spasi ekstra atau salah ketik minor spasi)
+        text_no_space = text.replace(" ", "")
+        for md in master_districts:
+            if text == md.lower() or text_no_space == md.lower().replace(" ", ""):
+                return md
+                
+        # Jika tidak ada kecocokan absolut, kembalikan ke pembersihan teks standar.
+        # Hal ini memungkinkan Controller di data_ingest untuk menangkap anomali 
+        # (melalui relasi database) jika wilayah tersebut memang tidak ada di Mimika.
+        return CleaningEngine.clean_text_smart(val)
+
+    @staticmethod
     def clean_and_align(file_contents: bytes):
         try:
             try:
@@ -118,6 +151,9 @@ class CleaningEngine:
         # =========================
         cleaned_records = []
 
+        # Deteksi Header yang memuat konteks spasial/wilayah
+        spatial_keywords = ['distrik', 'kecamatan', 'wilayah', 'daerah']
+
         for _, row in df.iterrows():
             row_dict = row.to_dict()
             processed_row = {}
@@ -133,7 +169,11 @@ class CleaningEngine:
                     'target', 'skor', 'tahun'
                 ]
 
-                if any(kw in key for kw in numeric_keywords):
+                # Pipeline Eksekusi Berdasarkan Konteks Header
+                if any(kw in key for kw in spatial_keywords):
+                    # Intervensi GIS: Normalisasi nama wilayah
+                    processed_row[key] = CleaningEngine.normalize_district_name(val)
+                elif any(kw in key for kw in numeric_keywords):
                     processed_row[key] = CleaningEngine.clean_numeric_smart(val)
                 else:
                     processed_row[key] = CleaningEngine.clean_text_smart(val)
