@@ -69,7 +69,7 @@ async def upload_and_process_form(
     try:
         # 6. Jalankan Cleaning Engine
         # PERBAIKAN: Menyertakan file.filename agar engine bisa mendeteksi ekstensi .xls/.xlsx/.csv
-        headers, cleaned_records, empty_rows_count = CleaningEngine.clean_and_align(
+        headers, cleaned_records, empty_rows_count, empty_cells_count = CleaningEngine.clean_and_align(
             contents, 
             filename=file.filename
         )
@@ -103,14 +103,25 @@ async def upload_and_process_form(
         total_rows = inserted_count + duplicate_count + empty_rows_count
         q_score = (inserted_count / total_rows * 100) if total_rows > 0 else 100.0
 
+        total_potential_cells = len(cleaned_records) * len(headers)
+        
+        if total_potential_cells > 0:
+            # Skor berdasarkan sel yang terisi (bukan null)
+            filled_cells = total_potential_cells - empty_cells_count
+            q_score = (filled_cells / total_potential_cells) * 100
+        else:
+            q_score = 100.0
+
         new_dataset.total_rows = total_rows
         new_dataset.quality_score = round(q_score, 2)
 
         new_dataset.last_ingest_stats = {
             "inserted": inserted_count,
             "duplicates": duplicate_count,
-            "empty": empty_rows_count,
-            "total": total_rows
+            "empty_rows": empty_rows_count,
+            "empty_cells": empty_cells_count,
+            "total_rows": total_rows,
+            "fill_rate": f"{round(q_score, 2)}%" 
         }
 
         # 9. Final Commit untuk DataRows dan Update Stats Dataset
@@ -132,7 +143,8 @@ async def upload_and_process_form(
         "stats": {
             "inserted": inserted_count,
             "duplicates": duplicate_count,
-            "empty": empty_rows_count,
+            "empty_rows": empty_rows_count,
+            "empty_cells": empty_cells_count,
             "total": total_rows,
             "quality_score": round(q_score, 2)
         }
