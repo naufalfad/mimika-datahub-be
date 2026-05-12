@@ -26,12 +26,12 @@ async def upload_and_process_form(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-
+    # 1. Validasi Kategori
     category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not category or not category.template_url:
         raise HTTPException(status_code=400, detail="Kategori tidak ditemukan atau belum memiliki template gambar")
 
-    # 2. PROSES UPLOAD GAMBAR USER
+    # 2. PROSES UPLOAD GAMBAR USER KE CLOUDINARY
     try:
         image_bytes = await image.read()
         # Folder akan otomatis terbuat di Cloudinary: mimika_datahub/user_uploads
@@ -42,21 +42,10 @@ async def upload_and_process_form(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal upload gambar: {str(e)}")
 
-    # try:
-    #     # Teknik extract public_id dari URL (mengambil path folder + nama file)
-    #     parts = category.template_url.split('/upload/')[-1].split('/')
-    #     # Gabungkan folder dan nama file, ganti '/' menjadi ':' sesuai aturan Cloudinary overlay
-    #     template_id_raw = "/".join(parts[1:]) # menghilangkan versi 'v12345/'
-    #     template_public_id = template_id_raw.split('.')[0].replace('/', ':')
-
-    #     # Generate Merged URL: Bingkai (u_...) diletakkan di atas Foto User
-    #     cloud_name = "drcgddki1"
-    #     merged_url = f"https://res.cloudinary.com/{cloud_name}/image/upload/u_{template_public_id},fl_relative,w_1.0,h_1.0/{photo_public_id}.png"
-    # except:
-    #     merged_url = photo_url # Fallback jika gagal generate
-
+    # 3. Tentukan Status Awal (Admin langsung approved, User pending)
     initial_status = "approved" if current_user.role == "admin" else "pending"
-    # 1. Simpan metadata dataset
+
+    # 4. Simpan Metadata Dataset
     new_dataset = models.Dataset(
         title=title,
         dataset_type=dataset_type,
@@ -68,32 +57,36 @@ async def upload_and_process_form(
         description=description,
         status=initial_status,
         user_id=current_user.id,
-        image_url=photo_url,
-        # merged_image_url=merged_url
+        image_url=photo_url
     )
     db.add(new_dataset)
     db.commit()
     db.refresh(new_dataset)
 
+    # 5. Baca Isi File Dataset
     contents = await file.read()
 
     try:
-        # 2. Cleaning
-        headers, cleaned_records, empty_rows_count = CleaningEngine.clean_and_align(contents)
+        # 6. Jalankan Cleaning Engine
+        # PERBAIKAN: Menyertakan file.filename agar engine bisa mendeteksi ekstensi .xls/.xlsx/.csv
+        headers, cleaned_records, empty_rows_count = CleaningEngine.clean_and_align(
+            contents, 
+            filename=file.filename
+        )
 
         new_dataset.headers = headers
 
         inserted_count = 0
         duplicate_count = 0
 
-        # ambil hash yang sudah ada
+        # Ambil hash yang sudah ada (untuk pencegahan duplikasi dalam satu dataset)
         existing_hashes = set(
             r[0] for r in db.query(models.DataRow.row_hash)
             .filter(models.DataRow.dataset_id == new_dataset.id)
             .all()
         )
 
-        # 3. Insert data
+        # 7. Insert Baris Data yang Sudah Bersih
         for rec in cleaned_records:
             if rec["row_hash"] not in existing_hashes:
                 db.add(models.DataRow(
@@ -106,7 +99,7 @@ async def upload_and_process_form(
             else:
                 duplicate_count += 1
 
-        # 4. Hitung statistik
+        # 8. Hitung Statistik Ingest
         total_rows = inserted_count + duplicate_count + empty_rows_count
         q_score = (inserted_count / total_rows * 100) if total_rows > 0 else 100.0
 
@@ -120,19 +113,17 @@ async def upload_and_process_form(
             "total": total_rows
         }
 
-        # 5. Commit
+        # 9. Final Commit untuk DataRows dan Update Stats Dataset
         db.commit()
 
     except Exception as e:
         db.rollback()
-
-        # optional: hapus dataset kalau gagal total
+        # Hapus metadata dataset jika proses cleaning/insert gagal total
         db.delete(new_dataset)
         db.commit()
+        raise HTTPException(status_code=400, detail=f"Gagal memproses isi file: {str(e)}")
 
-        raise HTTPException(status_code=400, detail=str(e))
-
-    # 6. Response (DI LUAR try)
+    # 10. Kembalikan Response Sukses
     return {
         "status": "success",
         "dataset_id": new_dataset.id,
