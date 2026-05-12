@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import numpy as np
+from rapidfuzz import process, fuzz
 
 class CleaningEngine:
     @staticmethod
@@ -68,10 +69,10 @@ class CleaningEngine:
             return str(val).strip() # Balikkan string jika gagal konversi
 
     @staticmethod
-    def normalize_district_name(val: any) -> str:
+    def fuzzy_match_district(val: any) -> str:
         """
-        Lexical Normalizer: Menormalisasi tipografi nama distrik/kecamatan.
-        Membuang prefiks yang tidak perlu dan mencocokkan dengan kamus 18 Distrik Mimika.
+        AI Parser: Menggunakan Levenshtein Distance untuk mendeteksi nama distrik.
+        Akan mereturn nama standar jika similarity >= 80%.
         """
         if pd.isna(val) or val is None or str(val).strip() == "":
             return None
@@ -89,15 +90,15 @@ class CleaningEngine:
             "Mimika Barat Tengah", "Amar", "Hoya", "Alama"
         ]
         
-        # 3. Fuzzy Matching Sederhana (Abaikan spasi ekstra atau salah ketik minor spasi)
-        text_no_space = text.replace(" ", "")
-        for md in master_districts:
-            if text == md.lower() or text_no_space == md.lower().replace(" ", ""):
-                return md
+        # 3. Ekstraksi kemiripan dengan algoritma WRatio (Rapidfuzz)
+        match = process.extractOne(text, master_districts, scorer=fuzz.WRatio)
+        
+        if match:
+            best_match, score, _ = match
+            if score >= 80: # Threshold aman untuk toleransi typo dari OPD
+                return best_match
                 
         # Jika tidak ada kecocokan absolut, kembalikan ke pembersihan teks standar.
-        # Hal ini memungkinkan Controller di data_ingest untuk menangkap anomali 
-        # (melalui relasi database) jika wilayah tersebut memang tidak ada di Mimika.
         return CleaningEngine.clean_text_smart(val)
 
     @staticmethod
@@ -147,36 +148,40 @@ class CleaningEngine:
         df = df.dropna(how='all')
 
         # =========================
-        # 5. PROSES DATA
+        # 5. PROSES DATA DENGAN SMART EXTRACTION
         # =========================
         cleaned_records = []
 
-        # Deteksi Header yang memuat konteks spasial/wilayah
-        spatial_keywords = ['distrik', 'kecamatan', 'wilayah', 'daerah']
+        # Scanner Heuristik untuk deteksi kolom spasial
+        spatial_regex = re.compile(r'(?i)(distrik|wilayah|kecamatan|daerah|lokasi)')
+        numeric_keywords = [
+            'jumlah', 'nilai', 'harga', 'total', 'value', 'biaya', 
+            'realisasi', 'target', 'skor', 'tahun'
+        ]
 
         for _, row in df.iterrows():
             row_dict = row.to_dict()
             processed_row = {}
+            spatial_match_name = None # Marker penampung spasial
 
             for key, val in row_dict.items():
                 if pd.isna(val):
                     processed_row[key] = None
                     continue
 
-                numeric_keywords = [
-                    'jumlah', 'nilai', 'harga', 'total',
-                    'value', 'biaya', 'realisasi',
-                    'target', 'skor', 'tahun'
-                ]
-
                 # Pipeline Eksekusi Berdasarkan Konteks Header
-                if any(kw in key for kw in spatial_keywords):
-                    # Intervensi GIS: Normalisasi nama wilayah
-                    processed_row[key] = CleaningEngine.normalize_district_name(val)
-                elif any(kw in key for kw in numeric_keywords):
+                if spatial_regex.search(str(key)):
+                    # Intervensi GIS: Normalisasi nama wilayah menggunakan AI (Fuzzy Match)
+                    normalized_val = CleaningEngine.fuzzy_match_district(val)
+                    processed_row[key] = normalized_val
+                    spatial_match_name = normalized_val # Simpan marker untuk di-extract oleh Controller
+                elif any(kw in str(key).lower() for kw in numeric_keywords):
                     processed_row[key] = CleaningEngine.clean_numeric_smart(val)
                 else:
                     processed_row[key] = CleaningEngine.clean_text_smart(val)
+
+            # Suntikkan Marker Spasial rahasia untuk Grouping & Melting di Ingest Controller
+            processed_row["_spatial_mapping"] = spatial_match_name
 
             # =========================
             # 6. HASH (UNTUK DETEKSI DUPLIKAT)

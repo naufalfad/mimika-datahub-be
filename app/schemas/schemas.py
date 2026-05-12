@@ -3,6 +3,20 @@ from typing import List, Optional, Any, Dict
 from datetime import datetime
 
 # --- GIS / SPATIAL SCHEMAS ---
+class DistrictProfileBase(BaseModel):
+    luas_wilayah: Optional[float] = None
+    jumlah_penduduk: Optional[int] = None
+    deskripsi: Optional[str] = None
+    batas_wilayah: Optional[str] = None
+
+class DistrictProfileCreate(DistrictProfileBase):
+    district_id: int
+
+class DistrictProfileOut(DistrictProfileBase):
+    id: int
+    class Config:
+        from_attributes = True
+
 class DistrictBase(BaseModel):
     name: str
 
@@ -11,6 +25,7 @@ class DistrictCreate(DistrictBase):
 
 class DistrictOut(DistrictBase):
     id: int
+    profile: Optional[DistrictProfileOut] = None # Include statis info on demand
     class Config:
         from_attributes = True
 

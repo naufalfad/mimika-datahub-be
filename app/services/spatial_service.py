@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, case
-from app.models.models import District, Dataset
-from typing import Dict, Any
+from app.models.models import District, Dataset, Category, DistrictProfile
+from typing import Dict, Any, List
 
 class SpatialService:
     """
@@ -10,7 +10,7 @@ class SpatialService:
     """
 
     @staticmethod
-    def get_district_stats(db: Session, category_id: int = None, year: int = None) -> Dict[str, int]:
+    def get_district_stats(db: Session, category_id: int = None, year: int = None) -> List[Dict[str, Any]]:
         """
         Melakukan komputasi agregasi total dataset per distrik.
         
@@ -65,11 +65,17 @@ class SpatialService:
         return formatted_response
 
     @staticmethod
-    def get_detailed_district_stats(db: Session) -> Dict[str, Any]:
+    def get_detailed_district_stats(db: Session, category_id: int = None) -> Dict[str, Any]:
         """
         [Opsional/Ekspansi] Metode tambahan untuk menampilkan statistik multivariabel
         Misal: Mengirimkan total baris (rows) atau rata-rata skor kualitas per distrik.
         """
+        filters = []
+        if category_id is not None:
+            filters.append(Dataset.category_id == category_id)
+
+        join_condition = and_(District.id == Dataset.district_id, *filters) if filters else District.id == Dataset.district_id
+
         query_results = (
             db.query(
                 District.name.label("district_name"),
@@ -77,7 +83,7 @@ class SpatialService:
                 func.sum(Dataset.total_rows).label("total_rows"),
                 func.avg(Dataset.quality_score).label("avg_quality")
             )
-            .outerjoin(Dataset, District.id == Dataset.district_id)
+            .outerjoin(Dataset, join_condition)
             .group_by(District.name)
             .all()
         )
@@ -91,3 +97,60 @@ class SpatialService:
             }
             
         return formatted_response
+
+    @staticmethod
+    def get_district_drilldown_stats(db: Session, district_id: int) -> Dict[str, Any]:
+        """
+        Engine untuk Pop-up Peta: Menarik Narasi Statis (Profile) dan 
+        Agregasi Kepadatan per Kategori (Dinamis).
+        """
+        # 1. Ambil Master Data & Profil Statis
+        district = db.query(District).filter(District.id == district_id).first()
+        if not district:
+            return None
+
+        # Fallback profile jika Bappeda belum mengisi data statisnya
+        profile_data = {
+            "luas_wilayah": None,
+            "jumlah_penduduk": None,
+            "deskripsi": "Data profil wilayah belum diatur oleh administrator.",
+            "batas_wilayah": None
+        }
+        
+        if district.profile:
+            profile_data = {
+                "luas_wilayah": district.profile.luas_wilayah,
+                "jumlah_penduduk": district.profile.jumlah_penduduk,
+                "deskripsi": district.profile.deskripsi,
+                "batas_wilayah": district.profile.batas_wilayah
+            }
+
+        # 2. Agregasi Total Dataset per Kategori secara on-the-fly
+        # SQL: SELECT c.id, c.name, COUNT(d.id) FROM categories c JOIN datasets d ON ... GROUP BY c.id
+        category_stats = (
+            db.query(
+                Category.id.label("category_id"),
+                Category.name.label("name"),
+                func.count(Dataset.id).label("total")
+            )
+            .join(Dataset, and_(Dataset.category_id == Category.id, Dataset.district_id == district_id))
+            .group_by(Category.id, Category.name)
+            .all()
+        )
+
+        categories_data = [
+            {
+                "category_id": row.category_id,
+                "name": row.name,
+                "total": row.total
+            }
+            for row in category_stats if row.total > 0 # Hanya tampilkan kategori yang ada datanya
+        ]
+
+        # 3. Strukturisasi Response O(1)
+        return {
+            "district_id": district.id,
+            "district_name": district.name,
+            "profile": profile_data,
+            "categories": categories_data
+        }
