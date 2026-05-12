@@ -36,7 +36,7 @@ def upgrade() -> None:
     category_table = table('categories',
         column('id', sa.Integer),
         column('name', sa.String),
-        column('image_url', sa.String)
+       
     )
 
     source_type_table = table('source_type',
@@ -52,11 +52,11 @@ def upgrade() -> None:
 
     # 2. Seed Data Category
     op.bulk_insert(category_table, [
-        {'id': 1, 'name': 'Kependudukan', 'image_url': None},
-        {'id': 2, 'name': 'Kesehatan', 'image_url': None},
-        {'id': 3, 'name': 'Pendidikan', 'image_url': None},
-        {'id': 4, 'name': 'Ekonomi', 'image_url': None},
-        {'id': 5, 'name': 'Infrastruktur', 'image_url': None},
+        {'id': 1, 'name': 'Kependudukan'},
+        {'id': 2, 'name': 'Kesehatan'},
+        {'id': 3, 'name': 'Pendidikan'},
+        {'id': 4, 'name': 'Ekonomi'},
+        {'id': 5, 'name': 'Infrastruktur'},
     ])
 
     # 3. Seed Data Source (Tanpa Icon)
