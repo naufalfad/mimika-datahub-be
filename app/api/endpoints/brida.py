@@ -89,6 +89,33 @@ def get_all_surveys(db: Session = Depends(get_db)):
     surveys = db.query(models.Survey).order_by(models.Survey.created_at.desc()).all()
     return surveys
 
+@router.get("/stats")
+def get_survey_stats(db: Session = Depends(get_db)):
+    """
+    Mengambil agregasi data statistik untuk dashboard Survey/BRIDA
+    """
+    # 1. Total Survey
+    total_surveys = db.query(models.Survey).count()
+    
+    # 2. Survey Aktif 
+    # PERBAIKAN: Gunakan kolom 'status' sesuai dengan data di database Anda
+    active_surveys = db.query(models.Survey).filter(models.Survey.status == "active").count()
+    
+    # 3. Total Responden
+    total_responses = db.query(models.SurveyResponse).count()
+    
+    # 4. Dataset Terbentuk
+    generated_datasets = db.query(models.Dataset).filter(
+        models.Dataset.title.like("Dataset Survey:%")
+    ).count()
+    
+    return {
+        "total": total_surveys,
+        "active": active_surveys,
+        "responses": total_responses,
+        "datasets": generated_datasets
+    }
+
 # 5. AMBIL DETAIL SATU SURVEY BESERTA JAWABANNYA (Untuk halaman pengisian form atau hasil analisis)
 @router.get("/{survey_id}")
 def get_survey_detail(survey_id: int, db: Session = Depends(get_db)):
@@ -108,3 +135,4 @@ def get_survey_detail(survey_id: int, db: Session = Depends(get_db)):
         "total_responses": responses_count,
         "responses": responses
     }
+
