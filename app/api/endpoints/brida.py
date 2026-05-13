@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models import models
 from app.schemas import schemas
+from app.api import deps
 import hashlib
 import json
 
@@ -39,7 +40,11 @@ def submit_response(res_in: schemas.SurveyResponseCreate, db: Session = Depends(
 from datetime import datetime
 
 @router.post("/generate-dataset/{survey_id}")
-def generate_dataset(survey_id: int, db: Session = Depends(get_db)):
+def generate_dataset(
+        survey_id: int, 
+        db: Session = Depends(get_db), 
+        current_user: models.User = Depends(deps.get_current_user)
+    ):
     survey = db.query(models.Survey).filter(models.Survey.id == survey_id).first()
     if not survey:
         raise HTTPException(status_code=404, detail="Survey tidak ditemukan.")
@@ -57,10 +62,20 @@ def generate_dataset(survey_id: int, db: Session = Depends(get_db)):
         db.refresh(brida_source)
 
     # 2. Kumpulkan Headers dengan Aman
-    all_keys = set()
+    question_map = {}
+    if survey.questions:
+        for q in survey.questions:
+            # Mengambil properti 'id' dan 'text' dari JSON questions
+            question_map[q.get("id")] = q.get("text")
+    
+    # Kumpulkan Headers yang sudah diterjemahkan
+    mapped_headers = set()
     for res in responses:
         if res.answers:
-            all_keys.update(res.answers.keys())
+            for key in res.answers.keys():
+                # Jika ID ada di map, pakai teks pertanyaan. Jika tidak ada, pakai ID aslinya.
+                header_text = question_map.get(key, key) 
+                mapped_headers.add(header_text)
 
     # 3. Ekstrak Tahun dari Survey (Jika tidak ada, pakai tahun saat ini)
     survey_year = survey.start_date.year if survey.start_date else datetime.utcnow().year
@@ -72,10 +87,10 @@ def generate_dataset(survey_id: int, db: Session = Depends(get_db)):
         dataset_type="pemerintah",            # <-- Penanda khusus untuk dataset survey
         year=survey_year,                        # <-- Memasukkan tahun
         source_id=brida_source.id,
-        headers=list(all_keys),
+        headers=list(mapped_headers),
         total_rows=len(responses),               # <-- Menyimpan jumlah responden langsung
         status="approved",                      # <-- Asumsi langsung tayang di katalog
-        # user_id=current_user.id                # (Buka comment ini jika endpoint diproteksi login admin)
+        user_id=current_user.id                # (Buka comment ini jika endpoint diproteksi login admin)
     )
     db.add(new_dataset)
     db.commit()
@@ -84,8 +99,14 @@ def generate_dataset(survey_id: int, db: Session = Depends(get_db)):
     # 5. Insert DataRow (beserta menghitung data sukses masuk)
     inserted_rows = 0
     for res in responses:
-        content = res.answers
-        row_json = json.dumps(content, sort_keys=True)
+        mapped_content = {}
+        
+        if res.answers:
+            for key, value in res.answers.items():
+                header_text = question_map.get(key, key)
+                mapped_content[header_text] = value
+        
+        row_json = json.dumps(mapped_content, sort_keys=True)
         row_hash = hashlib.md5(row_json.encode()).hexdigest()
         
         # Opsional: Cek jika ada hash yang sama persis (jika perlu)
@@ -94,7 +115,7 @@ def generate_dataset(survey_id: int, db: Session = Depends(get_db)):
         
         new_row = models.DataRow(
             dataset_id=new_dataset.id,
-            content=content,
+            content=mapped_content,
             row_hash=row_hash
         )
         db.add(new_row)

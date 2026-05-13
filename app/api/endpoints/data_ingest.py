@@ -26,6 +26,15 @@ async def upload_and_process_form(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+
+    headers = []
+    inserted_count = 0
+    duplicate_count = 0
+    empty_rows_count = 0
+    empty_cells_count = 0
+    total_rows = 0
+    q_score = 0.0
+    
     # 1. Validasi Kategori
     category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not category or not category.template_url:
@@ -45,6 +54,13 @@ async def upload_and_process_form(
     # 3. Tentukan Status Awal (Admin langsung approved, User pending)
     initial_status = "approved" if current_user.role == "admin" else "pending"
 
+    filename = file.filename.lower()
+    is_tabular = filename.endswith(('.xlsx', '.xls', '.csv'))
+    is_document = filename.endswith(('.pdf', '.doc', '.docx'))
+
+    if not is_tabular and not is_document:
+        raise HTTPException(status_code=400, detail="Format file tidak didukung.")
+
     # 4. Simpan Metadata Dataset
     new_dataset = models.Dataset(
         title=title,
@@ -57,7 +73,8 @@ async def upload_and_process_form(
         description=description,
         status=initial_status,
         user_id=current_user.id,
-        image_url=photo_url
+        image_url=photo_url,
+        structure_type="tabular" if is_tabular else "document"
     )
     db.add(new_dataset)
     db.commit()
@@ -66,90 +83,108 @@ async def upload_and_process_form(
     # 5. Baca Isi File Dataset
     contents = await file.read()
 
-    try:
-        # 6. Jalankan Cleaning Engine
-        # PERBAIKAN: Menyertakan file.filename agar engine bisa mendeteksi ekstensi .xls/.xlsx/.csv
-        clean_result = CleaningEngine.clean_and_align(
-            contents,
-            filename=file.filename
-        )
+    if is_tabular:
+        try:
+            # 6. Jalankan Cleaning Engine
+            # PERBAIKAN: Menyertakan file.filename agar engine bisa mendeteksi ekstensi .xls/.xlsx/.csv
+            clean_result = CleaningEngine.clean_and_align(
+                contents,
+                filename=file.filename
+            )
 
-        headers = clean_result["headers"]
-        cleaned_records = clean_result["records"]
-        empty_rows_count = clean_result["empty_rows"]
-        empty_cells_count = clean_result["empty_cells"]
-        structure_type = clean_result["structure_type"]
+            headers = clean_result["headers"]
+            cleaned_records = clean_result["records"]
+            empty_rows_count = clean_result["empty_rows"]
+            empty_cells_count = clean_result["empty_cells"]
+            structure_type = clean_result["structure_type"]
 
-        new_dataset.headers = headers
-        new_dataset.structure_type = structure_type
+            new_dataset.headers = headers
+            new_dataset.structure_type = structure_type
 
-        inserted_count = 0
-        duplicate_count = 0
+            inserted_count = 0
+            duplicate_count = 0
 
-        # Ambil hash yang sudah ada (untuk pencegahan duplikasi dalam satu dataset)
-        existing_hashes = set(
-            r[0] for r in db.query(models.DataRow.row_hash)
-            .filter(models.DataRow.dataset_id == new_dataset.id)
-            .all()
-        )
+            # Ambil hash yang sudah ada (untuk pencegahan duplikasi dalam satu dataset)
+            existing_hashes = set(
+                r[0] for r in db.query(models.DataRow.row_hash)
+                .filter(models.DataRow.dataset_id == new_dataset.id)
+                .all()
+            )
 
-        # 7. Insert Baris Data yang Sudah Bersih
-        for rec in cleaned_records:
-            if rec["row_hash"] not in existing_hashes:
-                db.add(models.DataRow(
-                    dataset_id=new_dataset.id,
-                    content=rec["content"],
-                    row_hash=rec["row_hash"]
-                ))
-                inserted_count += 1
-                existing_hashes.add(rec["row_hash"])
+            # 7. Insert Baris Data yang Sudah Bersih
+            for rec in cleaned_records:
+                if rec["row_hash"] not in existing_hashes:
+                    db.add(models.DataRow(
+                        dataset_id=new_dataset.id,
+                        content=rec["content"],
+                        row_hash=rec["row_hash"]
+                    ))
+                    inserted_count += 1
+                    existing_hashes.add(rec["row_hash"])
+                else:
+                    duplicate_count += 1
+
+            # 8. Hitung Statistik Ingest
+            total_rows = inserted_count + duplicate_count + empty_rows_count
+            q_score = (inserted_count / total_rows * 100) if total_rows > 0 else 100.0
+
+            if structure_type == "semi_structured":
+                total_potential_cells = len(cleaned_records) * 3
             else:
-                duplicate_count += 1
+                total_potential_cells = len(cleaned_records) * len(headers)
+            
+            if total_potential_cells > 0:
+                # Skor berdasarkan sel yang terisi (bukan null)
+                filled_cells = total_potential_cells - empty_cells_count
+                q_score = (filled_cells / total_potential_cells) * 100
+            else:
+                q_score = 100.0
 
-        # 8. Hitung Statistik Ingest
-        total_rows = inserted_count + duplicate_count + empty_rows_count
-        q_score = (inserted_count / total_rows * 100) if total_rows > 0 else 100.0
+            new_dataset.total_rows = total_rows
+            new_dataset.quality_score = round(q_score, 2)
 
-        if structure_type == "semi_structured":
-            total_potential_cells = len(cleaned_records) * 3
-        else:
-            total_potential_cells = len(cleaned_records) * len(headers)
-        
-        if total_potential_cells > 0:
-            # Skor berdasarkan sel yang terisi (bukan null)
-            filled_cells = total_potential_cells - empty_cells_count
-            q_score = (filled_cells / total_potential_cells) * 100
-        else:
-            q_score = 100.0
+            new_dataset.last_ingest_stats = {
+                "inserted": inserted_count,
+                "duplicates": duplicate_count,
+                "empty_rows": empty_rows_count,
+                "empty_cells": empty_cells_count,
+                "total_rows": total_rows,
+                "fill_rate": f"{round(q_score, 2)}%" 
+            }
 
-        new_dataset.total_rows = total_rows
-        new_dataset.quality_score = round(q_score, 2)
+            # 9. Final Commit untuk DataRows dan Update Stats Dataset
+            db.commit()
 
-        new_dataset.last_ingest_stats = {
-            "inserted": inserted_count,
-            "duplicates": duplicate_count,
-            "empty_rows": empty_rows_count,
-            "empty_cells": empty_cells_count,
-            "total_rows": total_rows,
-            "fill_rate": f"{round(q_score, 2)}%" 
-        }
+        except Exception as e:
+            db.rollback()
+            # Hapus metadata dataset jika proses cleaning/insert gagal total
+            db.delete(new_dataset)
+            db.commit()
+            raise HTTPException(status_code=400, detail=f"Gagal memproses isi file: {str(e)}")
 
-        # 9. Final Commit untuk DataRows dan Update Stats Dataset
-        db.commit()
-
-    except Exception as e:
-        db.rollback()
-        # Hapus metadata dataset jika proses cleaning/insert gagal total
-        db.delete(new_dataset)
-        db.commit()
-        raise HTTPException(status_code=400, detail=f"Gagal memproses isi file: {str(e)}")
-
+    elif is_document:
+        try:
+            # Kita gunakan resource_type="raw" untuk file non-image di Cloudinary
+            file_url, file_public_id = upload_image_to_cloudinary(
+                contents, 
+                folder_name="mimika_datahub/documents",
+                resource_type="raw" # PENTING: Untuk PDF/Word
+            )
+            new_dataset.file_url = file_url # Simpan URL file asli
+            new_dataset.headers = ["Dokumen"] # Header formal saja
+            new_dataset.total_rows = 1
+            new_dataset.quality_score = 100.0
+            db.commit()
+        except Exception as e:
+            # rollback...
+            raise HTTPException(status_code=500, detail=f"Gagal upload dokumen: {str(e)}")
+    
     # 10. Kembalikan Response Sukses
     return {
         "status": "success",
         "dataset_id": new_dataset.id,
         "headers_found": headers,
-        "message": f"Data berhasil diupload dengan status {initial_status}",
+        "message": f"File {filename} berhasil diproses sebagai {new_dataset.structure_type}",
         "stats": {
             "inserted": inserted_count,
             "duplicates": duplicate_count,
