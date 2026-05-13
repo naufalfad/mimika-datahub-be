@@ -36,7 +36,7 @@ async def upload_and_process_form(
     # ==========================================
     district_map = {d.name: d.id for d in db.query(models.District).all()}
     
-    # Dictionary penampung hasil pemecahan (Key: district_id, Value: List of Records)
+    # Dictionary penampung hasil pemecahan (Key: Tuple(district_id, is_unmapped), Value: List of Records)
     grouped_records = {}
     
     for rec in cleaned_records:
@@ -46,15 +46,24 @@ async def upload_and_process_form(
         rec["content"] = content 
         
         target_district_id = district_id # Titik awal menggunakan fallback dari User Form
+        is_unmapped = False # Flag trigger Fase 4 (Karantina)
         
-        # Validasi O(1): Konversi nama distrik hasil Fuzzy Match ke ID Database
-        if mapped_name and mapped_name in district_map:
-            target_district_id = district_map[mapped_name]
+        if mapped_name:
+            # Validasi O(1): Konversi nama distrik hasil Fuzzy Match ke ID Database
+            if mapped_name in district_map:
+                target_district_id = district_map[mapped_name]
+            else:
+                # Kolom wilayah terdeteksi, tapi namanya tidak valid/hancur. 
+                # Masukkan ke zona karantina
+                is_unmapped = True
+                target_district_id = None
+                
+        group_key = (target_district_id, is_unmapped)
             
-        if target_district_id not in grouped_records:
-            grouped_records[target_district_id] = []
+        if group_key not in grouped_records:
+            grouped_records[group_key] = []
             
-        grouped_records[target_district_id].append(rec)
+        grouped_records[group_key].append(rec)
     
     initial_status = "approved" if current_user.role == "admin" else "pending"
     
@@ -63,12 +72,12 @@ async def upload_and_process_form(
     first_dataset_id = 0 # Referensi master id untuk balikan response
     
     try:
-        # Loop pemecahan 1 Payload menjadi N Dataset berdasarkan Distrik
-        for d_id, records in grouped_records.items():
+        # Loop pemecahan 1 Payload menjadi N Dataset berdasarkan Distrik dan Status Karantina
+        for (d_id, is_unmapped), records in grouped_records.items():
             existing_hashes = set()
             unique_records = []
             
-            # Eliminasi duplikasi internal (dalam satu distrik yang sama)
+            # Eliminasi duplikasi internal (dalam satu distrik/grup yang sama)
             for r in records:
                 if r["row_hash"] not in existing_hashes:
                     unique_records.append(r)
@@ -80,19 +89,22 @@ async def upload_and_process_form(
                 continue
                 
             # 4. Buat Master Metadata (Tabel Dataset) untuk grup distrik ini
+            # Injeksi status Fase 4 (Karantina) ke dalam Master Dataset
             new_dataset = models.Dataset(
                 title=title,
                 dataset_type=dataset_type,
                 source_id=source_id,
                 category_id=category_id,
                 source_type_id=source_type_id,
-                district_id=d_id, # Injeksi Foreign Key hasil Mapping AI
+                district_id=d_id, 
                 year=year,
                 period=period,
                 description=description,
                 status=initial_status,
                 user_id=current_user.id,
-                headers=headers
+                headers=headers,
+                spatial_status="unmapped" if is_unmapped else "mapped",
+                needs_review=True if is_unmapped else False
             )
             db.add(new_dataset)
             db.flush() # Mendapatkan new_dataset.id tanpa menutup transaksi

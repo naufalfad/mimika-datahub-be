@@ -21,25 +21,21 @@ class SpatialService:
         sehingga distrik dengan 0 dataset akan hilang dari Payload Response.
         """
         
-        # 1. Bangun kondisi filter untuk kalkulasi kondisional (Dynamic Filtering)
-        dataset_filters = []
+        # 1. PERBAIKAN: WAJIB filter status approved agar data hantu tidak muncul di peta
+        dataset_filters = [Dataset.status == 'approved']
+        
         if category_id is not None:
             dataset_filters.append(Dataset.category_id == category_id)
         if year is not None:
             dataset_filters.append(Dataset.year == year)
             
-        # 2. Definisikan ekspresi agregasi (Jika ada filter, hitung yang match saja. Jika tidak, hitung semua ID)
-        if dataset_filters:
-            # SQL Equivalent: COUNT(CASE WHEN (dataset.category_id = X AND dataset.year = Y) THEN dataset.id ELSE NULL END)
-            aggregation_expr = func.count(
-                case(
-                    (and_(*dataset_filters), Dataset.id), 
-                    else_=None
-                )
-            ).label("total_data")
-        else:
-            # SQL Equivalent: COUNT(dataset.id)
-            aggregation_expr = func.count(Dataset.id).label("total_data")
+        # 2. PERBAIKAN: Gunakan List [] di dalam argumen case() untuk kompatibilitas SQLAlchemy
+        aggregation_expr = func.count(
+            case(
+                [(and_(*dataset_filters), Dataset.id)], 
+                else_=None
+            )
+        ).label("total_data")
 
         # 3. Eksekusi ORM Query menggunakan Left Outer Join
         query_results = (
@@ -53,7 +49,6 @@ class SpatialService:
         )
 
         # 4. Restrukturisasi hasil ke format Array of Objects
-        # Output: [{"district_name": "Mimika Baru", "total_dataset": 150}, ...]
         formatted_response = [
             {
                 "district_name": row.district_name,
@@ -70,11 +65,12 @@ class SpatialService:
         [Opsional/Ekspansi] Metode tambahan untuk menampilkan statistik multivariabel
         Misal: Mengirimkan total baris (rows) atau rata-rata skor kualitas per distrik.
         """
-        filters = []
+        # PERBAIKAN: Cegah perhitungan data pending
+        filters = [Dataset.status == 'approved']
         if category_id is not None:
             filters.append(Dataset.category_id == category_id)
 
-        join_condition = and_(District.id == Dataset.district_id, *filters) if filters else District.id == Dataset.district_id
+        join_condition = and_(District.id == Dataset.district_id, *filters)
 
         query_results = (
             db.query(
@@ -126,14 +122,18 @@ class SpatialService:
             }
 
         # 2. Agregasi Total Dataset per Kategori secara on-the-fly
-        # SQL: SELECT c.id, c.name, COUNT(d.id) FROM categories c JOIN datasets d ON ... GROUP BY c.id
+        # PERBAIKAN: Tambahkan Dataset.status == 'approved' ke kondisi Join
         category_stats = (
             db.query(
                 Category.id.label("category_id"),
                 Category.name.label("name"),
                 func.count(Dataset.id).label("total")
             )
-            .join(Dataset, and_(Dataset.category_id == Category.id, Dataset.district_id == district_id))
+            .join(Dataset, and_(
+                Dataset.category_id == Category.id, 
+                Dataset.district_id == district_id,
+                Dataset.status == 'approved'
+            ))
             .group_by(Category.id, Category.name)
             .all()
         )
