@@ -10,6 +10,48 @@ class SpatialService:
     """
 
     @staticmethod
+    def update_district_profile(db: Session, district_id: int, payload: dict) -> DistrictProfile:
+        """
+        [Fase 1] Engine Upsert (Update/Insert) untuk Manajemen Profil Wilayah.
+        Jika relasi profil untuk distrik ini belum ada, buat baru.
+        Jika sudah ada, timpa dengan data payload dari form Admin.
+        """
+        # 1. Validasi eksistensi Master District
+        district = db.query(District).filter(District.id == district_id).first()
+        if not district:
+            raise ValueError(f"Distrik dengan ID {district_id} tidak ditemukan.")
+
+        # 2. Ambil profil eksisting
+        profile = db.query(DistrictProfile).filter(DistrictProfile.district_id == district_id).first()
+
+        # 3. Logika Upsert
+        if not profile:
+            # Insert Baru
+            profile = DistrictProfile(
+                district_id=district_id,
+                luas_wilayah=payload.get("luas_wilayah"),
+                jumlah_penduduk=payload.get("jumlah_penduduk"),
+                deskripsi=payload.get("deskripsi"),
+                batas_wilayah=payload.get("batas_wilayah")
+            )
+            db.add(profile)
+        else:
+            # Update Eksisting
+            if "luas_wilayah" in payload:
+                profile.luas_wilayah = payload["luas_wilayah"]
+            if "jumlah_penduduk" in payload:
+                profile.jumlah_penduduk = payload["jumlah_penduduk"]
+            if "deskripsi" in payload:
+                profile.deskripsi = payload["deskripsi"]
+            if "batas_wilayah" in payload:
+                profile.batas_wilayah = payload["batas_wilayah"]
+
+        # 4. Finalisasi Transaksi
+        db.commit()
+        db.refresh(profile)
+        return profile
+
+    @staticmethod
     def get_district_stats(db: Session, category_id: int = None, year: int = None) -> List[Dict[str, Any]]:
         """
         Melakukan komputasi agregasi total dataset per distrik.

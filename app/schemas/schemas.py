@@ -12,6 +12,10 @@ class DistrictProfileBase(BaseModel):
 class DistrictProfileCreate(DistrictProfileBase):
     district_id: int
 
+# FASE 1: Schema untuk validasi form input Admin saat mengupdate profil
+class DistrictProfileUpdate(DistrictProfileBase):
+    pass
+
 class DistrictProfileOut(DistrictProfileBase):
     id: int
     class Config:

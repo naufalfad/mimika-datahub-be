@@ -4,7 +4,9 @@ from typing import List, Optional, Dict, Any
 
 from app.db.session import get_db
 from app.schemas import schemas
+from app.models import models
 from app.services.spatial_service import SpatialService
+from app.api.deps import get_current_user
 
 router = APIRouter()
 
@@ -48,3 +50,51 @@ def get_district_drilldown(
         raise HTTPException(status_code=404, detail="Data Distrik tidak ditemukan di database.")
         
     return drilldown_data
+
+# ==========================================
+# FASE 1: ENDPOINT MANAJEMEN PROFIL WILAYAH
+# ==========================================
+
+@router.get("/districts", response_model=List[schemas.DistrictOut])
+def get_all_districts(
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint untuk mendapatkan daftar seluruh distrik beserta profil statisnya.
+    Digunakan oleh Admin untuk menginisialisasi tabel Manajemen Wilayah.
+    """
+    # Menarik daftar distrik diurutkan berdasarkan ID master Bappeda
+    districts = db.query(models.District).order_by(models.District.id.asc()).all()
+    return districts
+
+@router.put("/district/{district_id}/profile", response_model=schemas.DistrictProfileOut)
+def update_district_profile(
+    district_id: int,
+    payload: schemas.DistrictProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Endpoint untuk Upsert (Update/Insert) Profil Wilayah.
+    Hanya dapat dieksekusi oleh Administrator sistem.
+    """
+    # 1. Otorisasi Ketat
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=403, 
+            detail="Akses Ditolak: Hanya Administrator yang diizinkan mengubah profil kewilayahan."
+        )
+        
+    # 2. Eksekusi Service
+    try:
+        # exclude_unset=True memastikan bahwa kita hanya meng-update kolom yang benar-benar dikirim dari Frontend.
+        profile = SpatialService.update_district_profile(
+            db=db, 
+            district_id=district_id, 
+            payload=payload.dict(exclude_unset=True) 
+        )
+        return profile
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Terjadi kegagalan sistem saat memproses profil: {str(e)}")
