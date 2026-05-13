@@ -29,10 +29,11 @@ class SpatialService:
         if year is not None:
             dataset_filters.append(Dataset.year == year)
             
-        # 2. PERBAIKAN: Gunakan List [] di dalam argumen case() untuk kompatibilitas SQLAlchemy
+        # 2. PERBAIKAN SYNTAX SQLALCHEMY 2.0: 
+        # Tanpa list [], langsung passing tuple posisional (condition, value)
         aggregation_expr = func.count(
             case(
-                [(and_(*dataset_filters), Dataset.id)], 
+                (and_(*dataset_filters), Dataset.id), 
                 else_=None
             )
         ).label("total_data")
