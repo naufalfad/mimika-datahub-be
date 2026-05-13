@@ -17,31 +17,61 @@ router = APIRouter()
 @router.get("/content/{dataset_id}")
 def get_dataset_content(
     dataset_id: int, 
-    limit: int = 100, # Batasi 100 baris untuk preview agar ringan
+    limit: int = 100, 
     db: Session = Depends(get_db)
 ):
     """
-    Mengambil isi data bersih (data_rows) untuk preview tabel seperti Excel.
+    Mengambil isi data berdasarkan tipe struktur (Tabular vs Document).
     """
-    # 1. Ambil info dataset untuk dapetin headernya
+    # 1. Ambil metadata dataset
     dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset tidak ditemukan")
 
-    # 2. Ambil baris datanya
-    rows = db.query(models.DataRow).filter(models.DataRow.dataset_id == dataset_id).limit(limit).all()
-    
-    # 3. Increment view count (karena data sedang diakses/dilihat)
+    # 2. Update view count
     dataset.view_count += 1
     db.commit()
 
-    # 4. Susun respon agar frontend tinggal render <thead> dan <tbody>
-    return {
-        "title": dataset.title,
-        "type": dataset.dataset_type,
-        "headers": dataset.headers,  # Contoh: ["nama_distrik", "jumlah_penduduk"]
-        "rows": [r.content for r in rows] # Contoh: [{"nama_distrik": "Mimika Baru", "jumlah_penduduk": 1000}, ...]
-    }
+    # 3. Logika Percabangan Response berdasarkan Structure Type
+    
+    # --- A. JIKA FORMAT DOKUMEN (PDF/WORD) ---
+    if dataset.structure_type == "document":
+        file_url = dataset.file_url
+        view_url = file_url  # Default untuk PDF
+        
+        # Logika Tambahan: Jika file adalah Word (.doc atau .docx)
+        # Browser tidak bisa render Word secara native, maka gunakan Office Online Viewer
+        if file_url and any(file_url.lower().endswith(ext) for ext in ['.doc', '.docx']):
+            view_url = f"https://view.officeapps.live.com/op/view.aspx?src={file_url}"
+
+        return {
+            "title": dataset.title,
+            "dataset_type": dataset.dataset_type,
+            "structure_type": "document",
+            "file_url": file_url,  # URL asli untuk download
+            "view_url": view_url,  # URL khusus untuk ditampilkan di Iframe/Previewer
+            "description": dataset.description,
+            "headers": dataset.headers,
+            "rows": [] 
+        }
+
+    # --- B. JIKA FORMAT TABULAR (EXCEL/CSV/SURVEY) ---
+    else:
+        rows = db.query(models.DataRow).filter(
+            models.DataRow.dataset_id == dataset_id
+        ).limit(limit).all()
+        
+        return {
+            "title": dataset.title,
+            "dataset_type": dataset.dataset_type,
+            "structure_type": "tabular",
+            "headers": dataset.headers,
+            "rows": [r.content for r in rows],
+            "total_rows_preview": len(rows),
+            "total_rows_actual": dataset.total_rows,
+            "file_url": None,
+            "view_url": None
+        }
 
 @router.get("/export/{dataset_id}")
 def export_dataset(dataset_id: int, db: Session = Depends(get_db)):
