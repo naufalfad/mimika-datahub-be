@@ -7,6 +7,126 @@ import numpy as np
 
 class CleaningEngine:
     @staticmethod
+    def is_semi_structured(df_raw):
+
+        # banyak merged header khas html xls
+        repeated_header_pattern = False
+
+        for i in range(min(5, len(df_raw))):
+
+            row = df_raw.iloc[i]
+
+            values = []
+
+            for v in row:
+                if pd.notna(v):
+
+                    s = str(v).strip().lower()
+
+                    if s not in ["nan", "none", ""]:
+                        values.append(s)
+
+            if len(values) >= 3:
+
+                unique_ratio = len(set(values)) / len(values)
+
+                # merged cell khas html
+                if unique_ratio < 0.5:
+                    repeated_header_pattern = True
+
+        # banyak unnamed/merged style
+        merged_like_columns = (
+            df_raw.shape[1] >= 6
+        )
+
+        return repeated_header_pattern and merged_like_columns
+
+    @staticmethod
+    def detect_row_type(row):
+        values = [
+            str(v).strip()
+            for v in row
+            if pd.notna(v)
+        ]
+
+        if not values:
+            return "empty"
+
+        # section/title
+        if len(values) == 1 and len(values[0]) > 10:
+            return "section"
+
+        numeric_count = sum(
+            1 for v in values
+            if re.match(r'^[\d.,]+$', v)
+        )
+
+        if numeric_count >= 1:
+            return "data"
+
+        return "unknown"
+
+    @staticmethod
+    def parse_semi_structured(df_raw):
+        cleaned_records = []
+
+        current_section = "general"
+
+        for idx, row in df_raw.iterrows():
+
+            row_type = CleaningEngine.detect_row_type(row)
+
+            values = [
+                str(v).strip()
+                for v in row
+                if pd.notna(v)
+            ]
+
+            if row_type == "section":
+                current_section = values[0]
+                continue
+
+            if row_type != "data":
+                continue
+
+            semantic_data = {}
+
+            if len(values) >= 1:
+                semantic_data["label"] = CleaningEngine.clean_text_smart(values[0])
+
+            # ambil angka pertama
+            numeric_values = []
+
+            for val in values[1:]:
+                cleaned = CleaningEngine.clean_numeric_smart(val)
+
+                if isinstance(cleaned, (int, float)):
+                    numeric_values.append(cleaned)
+
+            if numeric_values:
+                semantic_data["nilai"] = numeric_values[0]
+
+            if len(values) >= 3:
+                semantic_data["metadata"] = values[2:]
+
+            semantic_data["section"] = current_section
+
+            row_json = json.dumps(semantic_data, sort_keys=True, default=str)
+
+            cleaned_records.append({
+                "content": semantic_data,
+                "row_hash": hashlib.md5(row_json.encode()).hexdigest()
+            })
+
+        return {
+            "structure_type": "semi_structured",
+            "headers": ["section", "label", "nilai", "metadata"],
+            "records": cleaned_records,
+            "empty_rows": 0,
+            "empty_cells": 0
+        }
+
+    @staticmethod
     def clean_text_smart(text: str) -> str:
         """Pembersihan teks: spasi tanda baca, double space, dan title case"""
         if not text or pd.isna(text):
@@ -104,7 +224,10 @@ class CleaningEngine:
             raise Exception(f"Gagal membaca isi file {ext if ext else ''}: {str(e)}")
 
         # === PERBAIKAN 1: Netralkan struktur kolom dari bawaan HTML/Excel ===
-        df_raw.columns = range(df_raw.shape[1]) 
+        df_raw.columns = range(df_raw.shape[1])
+
+        if CleaningEngine.is_semi_structured(df_raw):
+            return CleaningEngine.parse_semi_structured(df_raw)
 
         # === PERBAIKAN 3: Bersihkan spasi kosong dengan aman (hanya pada kolom string) ===
         df_raw = df_raw.replace({'\xa0': ' '}, regex=True)
@@ -177,6 +300,8 @@ class CleaningEngine:
 
         df.columns = [clean_header_name(c) for c in df.columns]
 
+        headers = df.columns.tolist()
+
         # Hapus kolom Unnamed yang tidak sengaja terbentuk
         df = df.loc[:, ~df.columns.str.contains('unnamed')]
         
@@ -228,4 +353,10 @@ class CleaningEngine:
                 "row_hash": row_hash
             })
 
-        return df.columns.tolist(), cleaned_records, int(empty_rows_count), int(total_empty_cells)
+        return {
+            "structure_type": "tabular",
+            "headers": headers,
+            "records": cleaned_records,
+            "empty_rows": int(empty_rows_count),
+            "empty_cells": int(total_empty_cells)
+        }

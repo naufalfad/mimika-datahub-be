@@ -69,12 +69,19 @@ async def upload_and_process_form(
     try:
         # 6. Jalankan Cleaning Engine
         # PERBAIKAN: Menyertakan file.filename agar engine bisa mendeteksi ekstensi .xls/.xlsx/.csv
-        headers, cleaned_records, empty_rows_count, empty_cells_count = CleaningEngine.clean_and_align(
-            contents, 
+        clean_result = CleaningEngine.clean_and_align(
+            contents,
             filename=file.filename
         )
 
+        headers = clean_result["headers"]
+        cleaned_records = clean_result["records"]
+        empty_rows_count = clean_result["empty_rows"]
+        empty_cells_count = clean_result["empty_cells"]
+        structure_type = clean_result["structure_type"]
+
         new_dataset.headers = headers
+        new_dataset.structure_type = structure_type
 
         inserted_count = 0
         duplicate_count = 0
@@ -103,7 +110,10 @@ async def upload_and_process_form(
         total_rows = inserted_count + duplicate_count + empty_rows_count
         q_score = (inserted_count / total_rows * 100) if total_rows > 0 else 100.0
 
-        total_potential_cells = len(cleaned_records) * len(headers)
+        if structure_type == "semi_structured":
+            total_potential_cells = len(cleaned_records) * 3
+        else:
+            total_potential_cells = len(cleaned_records) * len(headers)
         
         if total_potential_cells > 0:
             # Skor berdasarkan sel yang terisi (bukan null)

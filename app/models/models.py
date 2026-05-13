@@ -55,6 +55,7 @@ class Dataset(Base):
     # Kita simpan daftar kolom yang sudah dirapikan di sini (misal: ["nama", "tahun", "jumlah"])
     headers = Column(JSON) 
     status = Column(String, default="pending")
+    structure_type = Column(String, default="tabular")
     
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     

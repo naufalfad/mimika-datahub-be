@@ -16,7 +16,6 @@ class CategoryOut(BaseModel):
 class SourceBase(BaseModel):
     name: str
     type: str
-    icon: Optional[str] = "fa-database"
 
 class SourceCreate(SourceBase):
     pass
