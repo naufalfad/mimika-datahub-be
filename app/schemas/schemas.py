@@ -2,6 +2,49 @@ from pydantic import BaseModel
 from typing import List, Optional, Any, Dict
 from datetime import datetime
 
+# --- GIS / SPATIAL SCHEMAS ---
+class DistrictProfileBase(BaseModel):
+    luas_wilayah: Optional[float] = None
+    jumlah_penduduk: Optional[int] = None
+    deskripsi: Optional[str] = None
+    batas_wilayah: Optional[str] = None
+
+class DistrictProfileCreate(DistrictProfileBase):
+    district_id: int
+
+# FASE 1: Schema untuk validasi form input Admin saat mengupdate profil
+class DistrictProfileUpdate(DistrictProfileBase):
+    pass
+
+class DistrictProfileOut(DistrictProfileBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class DistrictBase(BaseModel):
+    name: str
+
+class DistrictCreate(DistrictBase):
+    pass
+
+class DistrictOut(DistrictBase):
+    id: int
+    profile: Optional[DistrictProfileOut] = None # Include statis info on demand
+    class Config:
+        from_attributes = True
+
+class SpatialStatResponse(BaseModel):
+    """
+    Kontrak response untuk agregasi Peta GIS.
+    Menggunakan format yang memudahkan iterasi O(1) atau mapping di frontend.
+    """
+    district_name: str
+    total_dataset: int
+    total_rows: Optional[int] = None
+    avg_quality: Optional[float] = None
+
+
+# --- CATEGORY SCHEMAS ---
 class CategoryCreate(BaseModel):
     name: str
 
@@ -12,7 +55,7 @@ class CategoryOut(BaseModel):
     class Config:
         from_attributes = True
 
-# Schema untuk Source (OPD)
+# --- SOURCE SCHEMAS ---
 class SourceBase(BaseModel):
     name: str
     type: str
@@ -34,12 +77,13 @@ class SourceTypeOut(BaseModel):
     class Config:
         from_attributes = True
 
-# Schema untuk Dataset (Judul Tabel)
+# --- DATASET SCHEMAS ---
 class DatasetCreate(BaseModel):
     title: str
     source_id: int
     category_id: int
     source_type_id: int
+    district_id: Optional[int] = None # Ditambahkan untuk relasi GIS
     year: int
     period: str
     dataset_type: str
@@ -55,10 +99,11 @@ class DatasetOut(DatasetCreate):
     created_at: datetime
     category: CategoryOut
     sourceType: SourceTypeOut
+    district: Optional[DistrictOut] = None # Ditambahkan untuk output detail dataset
     class Config:
         from_attributes = True
 
-# Schema untuk Respon Upload
+# --- UPLOAD SCHEMAS ---
 class Stats(BaseModel):
     inserted: int
     duplicates: int
@@ -74,6 +119,7 @@ class UploadResponse(BaseModel):
     headers_found: list[str]
     stats: Stats
 
+# --- SURVEY SCHEMAS ---
 class SurveyCreate(BaseModel):
     title: str
     description: Optional[str] = None

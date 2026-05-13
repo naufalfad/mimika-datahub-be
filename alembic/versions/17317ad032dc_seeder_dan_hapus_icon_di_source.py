@@ -33,6 +33,11 @@ def upgrade() -> None:
         column('type', sa.String)
     )
 
+    category_table = table('categories',
+        column('id', sa.Integer),
+        column('name', sa.String)
+    )
+
     source_type_table = table('source_type',
         column('id', sa.Integer),
         column('name', sa.String)
@@ -44,7 +49,16 @@ def upgrade() -> None:
         {'id': 2, 'name': 'Eksternal'},
     ])
 
-    # 2. Seed Data Source (Tanpa Icon)
+    # 2. Seed Data Category (Dari Branch Anda)
+    op.bulk_insert(category_table, [
+        {'id': 1, 'name': 'Kependudukan'},
+        {'id': 2, 'name': 'Kesehatan'},
+        {'id': 3, 'name': 'Pendidikan'},
+        {'id': 4, 'name': 'Ekonomi'},
+        {'id': 5, 'name': 'Infrastruktur'},
+    ])
+
+    # 3. Seed Data Source (Tanpa Icon)
     op.bulk_insert(source_table, [
         {'id': 1, 'name': 'Badan Pusat Statistik (BPS)', 'type': 'kementerian'},
         {'id': 2, 'name': 'Dinas Kesehatan', 'type': 'opd'},

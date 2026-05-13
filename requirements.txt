@@ -23,3 +23,6 @@ python-multipart
 pydantic
 pydantic-settings
 python-dotenv
+
+# Tambahkan baris ini ke dalam file requirements.txt Anda
+rapidfuzz==3.6.1
