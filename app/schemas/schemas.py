@@ -84,6 +84,7 @@ class SurveyCreate(BaseModel):
 
 class SurveyResponseCreate(BaseModel):
     survey_id: int
+    email: Optional[str] = None
     answers: Dict[str, Any]
 
 # --- USER SCHEMAS ---

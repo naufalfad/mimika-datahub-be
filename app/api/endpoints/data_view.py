@@ -7,6 +7,7 @@ from typing import List, Optional
 from fastapi.responses import StreamingResponse
 from app.services.export_engine import ExportEngine
 from app.api import deps
+from sqlalchemy import or_
 
 import csv
 import io
@@ -129,3 +130,61 @@ def export_monitoring_csv(db: Session = Depends(get_db), admin: models.User = De
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=monitoring_opd.csv"}
     )
+
+@router.get("/search-suggestions")
+def get_search_suggestions(
+    q: str = Query(..., min_length=1), 
+    db: Session = Depends(get_db)
+):
+    """
+    Fitur pencarian untuk landing page:
+    1. Mencari kategori yang namanya mirip 'q'
+    2. Mencari dataset yang judulnya mirip 'q'
+    """
+    # Mencari kategori yang relevan
+    categories = db.query(models.Category).filter(
+        models.Category.name.ilike(f"%{q}%")
+    ).limit(5).all()
+
+    # Mencari dataset yang relevan (hanya yang sudah approved)
+    datasets = db.query(models.Dataset).filter(
+        models.Dataset.status == "approved",
+        or_(
+            models.Dataset.title.ilike(f"%{q}%"),
+            models.Dataset.description.ilike(f"%{q}%")
+        )
+    ).limit(10).all()
+
+    return {
+        "suggestions": {
+            "categories": [{"id": c.id, "name": c.name} for c in categories],
+            "datasets": [
+                {
+                    "id": d.id, 
+                    "title": d.title, 
+                    "category_id": d.category_id,
+                    "dataset_type": d.dataset_type
+                } for d in datasets
+            ]
+        }
+    }
+
+@router.get("/search-by-category")
+def search_by_category(
+    category_id: int, 
+    q: Optional[str] = None, 
+    db: Session = Depends(get_db)
+):
+    """
+    Mencari dataset spesifik di dalam satu kategori
+    """
+    query = db.query(models.Dataset).filter(
+        models.Dataset.category_id == category_id,
+        models.Dataset.status == "approved"
+    ) 
+
+    if q:
+        query = query.filter(models.Dataset.title.ilike(f"%{q}%"))
+
+    results = query.all()
+    return results 

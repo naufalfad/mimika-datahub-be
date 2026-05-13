@@ -20,8 +20,15 @@ def create_survey(survey_in: schemas.SurveyCreate, db: Session = Depends(get_db)
 # 2. SUBMIT JAWABAN (Ditembak saat responden mengisi form)
 @router.post("/submit-response")
 def submit_response(res_in: schemas.SurveyResponseCreate, db: Session = Depends(get_db)):
+    # Logika untuk standarisasi anonimitas
+    # Jika email isinya "-", string kosong "", atau "anonim", kita ubah jadi None
+    clean_email = res_in.email.strip() if res_in.email else None
+    if clean_email in ["-", "", "anonim", "anonymous"]:
+        clean_email = None
+
     new_res = models.SurveyResponse(
         survey_id=res_in.survey_id,
+        email=clean_email,     # Simpan email yang sudah dibersihkan
         answers=res_in.answers
     )
     db.add(new_res)
@@ -106,4 +113,34 @@ def generate_dataset(survey_id: int, db: Session = Depends(get_db)):
         "status": "success", 
         "dataset_id": new_dataset.id, 
         "message": f"Dataset survey berhasil dibuat dengan {inserted_rows} baris data."
+    }
+
+    # ==========================================
+# TAMBAHAN: API UNTUK MENGAMBIL DATA SURVEY
+# ==========================================
+
+# 4. AMBIL SEMUA DAFTAR SURVEY (Untuk halaman Daftar Survey di Dashboard)
+@router.get("/list")
+def get_all_surveys(db: Session = Depends(get_db)):
+    surveys = db.query(models.Survey).order_by(models.Survey.created_at.desc()).all()
+    return surveys
+
+# 5. AMBIL DETAIL SATU SURVEY BESERTA JAWABANNYA (Untuk halaman pengisian form atau hasil analisis)
+@router.get("/{survey_id}")
+def get_survey_detail(survey_id: int, db: Session = Depends(get_db)):
+    survey = db.query(models.Survey).filter(models.Survey.id == survey_id).first()
+    
+    if not survey:
+        raise HTTPException(status_code=404, detail="Survey tidak ditemukan.")
+    
+    # Ambil jumlah total responden untuk survey ini
+    responses_count = db.query(models.SurveyResponse).filter(models.SurveyResponse.survey_id == survey_id).count()
+    
+    # Ambil data responses (Opsional: batasi / paginate jika data terlalu besar, untuk sementara di-load semua)
+    responses = db.query(models.SurveyResponse).filter(models.SurveyResponse.survey_id == survey_id).all()
+
+    return {
+        "survey": survey,
+        "total_responses": responses_count,
+        "responses": responses
     }
