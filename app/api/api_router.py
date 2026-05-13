@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from app.api.endpoints import (
     categories, sources, datasets, data_ingest, data_view, 
-    dashboard, brida, auth, source_type, users, monitoring, gis
+    dashboard, brida, auth, source_type, users, monitoring, gis, atlas
 )
 
 api_router = APIRouter()
@@ -23,3 +23,5 @@ api_router.include_router(gis.router, prefix="/gis", tags=["5. Analytics - GIS /
 
 api_router.include_router(brida.router, prefix="/brida", tags=["6. Analytics - Survey"])
 api_router.include_router(auth.router, prefix="/auth", tags=["7. Auth - Login"])
+
+api_router.include_router(atlas.router, prefix="/atlas", tags=["Atlas Scrollytelling"])

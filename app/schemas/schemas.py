@@ -196,3 +196,27 @@ class DatasetRecentOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+        # --- ATLAS / SCROLLYTELLING SCHEMAS ---
+
+class AtlasMetadata(BaseModel):
+    """Skema metadata untuk memberikan konteks naratif pada setiap indikator atlas."""
+    title: str
+    unit: str
+    description: str
+    color_scheme: str # Contoh: 'Reds', 'Blues', 'Greens'
+
+class AtlasIndicatorResponse(BaseModel):
+    """
+    DTO Utama untuk Atlas. 
+    Memisahkan antara identitas indikator, metadata narasi, 
+    dan data spasial yang dipetakan langsung ke key distrik (O(1) mapping).
+    """
+    indicator: str
+    metadata: AtlasMetadata
+    data: Dict[str, float] # Format: {"mimikabaru": 12.5, "wania": 15.0, ...}
+
+class AtlasIndicatorMetaBrief(BaseModel):
+    """Skema ringkas untuk list metadata indikator (pilihan menu/sidebar)."""
+    key: str
+    metadata: AtlasMetadata
