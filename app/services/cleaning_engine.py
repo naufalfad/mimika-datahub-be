@@ -8,6 +8,126 @@ from rapidfuzz import process, fuzz
 
 class CleaningEngine:
     @staticmethod
+    def is_semi_structured(df_raw):
+
+        # banyak merged header khas html xls
+        repeated_header_pattern = False
+
+        for i in range(min(5, len(df_raw))):
+
+            row = df_raw.iloc[i]
+
+            values = []
+
+            for v in row:
+                if pd.notna(v):
+
+                    s = str(v).strip().lower()
+
+                    if s not in ["nan", "none", ""]:
+                        values.append(s)
+
+            if len(values) >= 3:
+
+                unique_ratio = len(set(values)) / len(values)
+
+                # merged cell khas html
+                if unique_ratio < 0.5:
+                    repeated_header_pattern = True
+
+        # banyak unnamed/merged style
+        merged_like_columns = (
+            df_raw.shape[1] >= 6
+        )
+
+        return repeated_header_pattern and merged_like_columns
+
+    @staticmethod
+    def detect_row_type(row):
+        values = [
+            str(v).strip()
+            for v in row
+            if pd.notna(v)
+        ]
+
+        if not values:
+            return "empty"
+
+        # section/title
+        if len(values) == 1 and len(values[0]) > 10:
+            return "section"
+
+        numeric_count = sum(
+            1 for v in values
+            if re.match(r'^[\d.,]+$', v)
+        )
+
+        if numeric_count >= 1:
+            return "data"
+
+        return "unknown"
+
+    @staticmethod
+    def parse_semi_structured(df_raw):
+        cleaned_records = []
+
+        current_section = "general"
+
+        for idx, row in df_raw.iterrows():
+
+            row_type = CleaningEngine.detect_row_type(row)
+
+            values = [
+                str(v).strip()
+                for v in row
+                if pd.notna(v)
+            ]
+
+            if row_type == "section":
+                current_section = values[0]
+                continue
+
+            if row_type != "data":
+                continue
+
+            semantic_data = {}
+
+            if len(values) >= 1:
+                semantic_data["label"] = CleaningEngine.clean_text_smart(values[0])
+
+            # ambil angka pertama
+            numeric_values = []
+
+            for val in values[1:]:
+                cleaned = CleaningEngine.clean_numeric_smart(val)
+
+                if isinstance(cleaned, (int, float)):
+                    numeric_values.append(cleaned)
+
+            if numeric_values:
+                semantic_data["nilai"] = numeric_values[0]
+
+            if len(values) >= 3:
+                semantic_data["metadata"] = values[2:]
+
+            semantic_data["section"] = current_section
+
+            row_json = json.dumps(semantic_data, sort_keys=True, default=str)
+
+            cleaned_records.append({
+                "content": semantic_data,
+                "row_hash": hashlib.md5(row_json.encode()).hexdigest()
+            })
+
+        return {
+            "structure_type": "semi_structured",
+            "headers": ["section", "label", "nilai", "metadata"],
+            "records": cleaned_records,
+            "empty_rows": 0,
+            "empty_cells": 0
+        }
+
+    @staticmethod
     def clean_text_smart(text: str) -> str:
         """Pembersihan teks: spasi tanda baca, double space, dan title case"""
         if not text or pd.isna(text):
@@ -62,6 +182,8 @@ class CleaningEngine:
                 # Bersihkan sisa karakter non-angka kecuali titik desimal
                 s_val = re.sub(r'[^\d.]', '', s_val)
             
+            if not s_val: return None
+            
             final_num = float(s_val)
             # Kembalikan sebagai Integer jika tidak ada komanya (.0)
             return int(final_num) if final_num.is_integer() else final_num
@@ -102,61 +224,138 @@ class CleaningEngine:
         return CleaningEngine.clean_text_smart(val)
 
     @staticmethod
-    def clean_and_align(file_contents: bytes):
+    def clean_and_align(file_contents: bytes, filename: str = ""):
+        """Membaca file dan melakukan pembersihan data secara otomatis"""
+        ext = filename.split('.')[-1].lower() if filename else ""
+        file_buffer = io.BytesIO(file_contents)
+        
         try:
-            try:
-                df_raw = pd.read_excel(io.BytesIO(file_contents), header=None)
-            except:
-                df_raw = pd.read_csv(io.BytesIO(file_contents), header=None)
-        except Exception as e:
-            raise Exception(f"Format file tidak didukung: {str(e)}")
+            # logic pembacaan berdasarkan ekstensi
+            if ext == 'xls':
+                try:
+                    df_raw = pd.read_excel(file_buffer, header=None, engine='xlrd')
+                except Exception as e:
+                    file_buffer.seek(0)
+                    try:
+                        dfs = pd.read_html(file_buffer, header=None)
+                        if not dfs: raise ValueError("Tidak ditemukan tabel HTML")
+                        df_raw = max(dfs, key=lambda d: d.shape[0] * d.shape[1])
+                    except ValueError:
+                        file_buffer.seek(0)
+                        df_raw = pd.read_csv(file_buffer, header=None, sep='\t')
 
-        # =========================
-        # 1. DETEKSI HEADER
-        # =========================
-        first_row_with_data = 0
+            elif ext == 'xlsx':
+                df_raw = pd.read_excel(file_buffer, header=None, engine='openpyxl')
+            elif ext == 'csv':
+                df_raw = pd.read_csv(file_buffer, header=None)
+            else:
+                try:
+                    df_raw = pd.read_excel(file_buffer, header=None)
+                except:
+                    file_buffer.seek(0)
+                    df_raw = pd.read_csv(file_buffer, header=None)
+        except Exception as e:
+            raise Exception(f"Gagal membaca isi file {ext if ext else ''}: {str(e)}")
+
+        # === PERBAIKAN 1: Netralkan struktur kolom dari bawaan HTML/Excel ===
+        df_raw.columns = range(df_raw.shape[1])
+
+        if CleaningEngine.is_semi_structured(df_raw):
+            return CleaningEngine.parse_semi_structured(df_raw)
+
+        # === PERBAIKAN 3: Bersihkan spasi kosong dengan aman (hanya pada kolom string) ===
+        df_raw = df_raw.replace({'\xa0': ' '}, regex=True)
+        # Terapkan regex hapus spasi kosong hanya pada tipe data object/string agar tidak error
+        for col in df_raw.select_dtypes(include=['object']).columns:
+            df_raw[col] = df_raw[col].replace(r'^\s*$', np.nan, regex=True)
+
+        # ===============================
+        # 1. DETEKSI & GABUNG MULTI-HEADER
+        # ===============================
+        
+        first_row_idx = 0
         for i, row in df_raw.iterrows():
             if row.count() > 1:
-                first_row_with_data = i
+                first_row_idx = i
                 break
+        
+        header_candidates = df_raw.iloc[first_row_idx : first_row_idx + 3].copy()
+        header_candidates = header_candidates.ffill(axis=1)
 
-        df_raw = df_raw.iloc[first_row_with_data:].reset_index(drop=True)
-        df_raw.columns = df_raw.iloc[0]
-        df = df_raw[1:].reset_index(drop=True)
+        header_rows_count = 1
+        # === PERBAIKAN 2: Logika Header lebih cerdas agar data teks tidak tertelan ===
+        for i in range(1, len(header_candidates)):
+            row = header_candidates.iloc[i]
+            numeric_count = pd.to_numeric(row, errors='coerce').notnull().sum()
+            
+            # Cek apakah ada data dalam baris ini yang karakternya panjang (indikasi ini adalah data riil, bukan header)
+            has_long_text = any(isinstance(val, str) and len(str(val)) > 30 for val in row.dropna())
 
-        # =========================
-        # 2. BERSIHKAN KOLOM
-        # =========================
-        df = df.loc[:, df.columns.notna()]
-        df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed')]
+            # Jika banyak angka ATAU ada teks yang panjang, HENTIKAN (ini adalah baris data!)
+            if numeric_count > 1 or has_long_text:
+                break
+            else:
+                header_rows_count = i + 1
 
+        # Gabungkan baris-baris header menjadi satu string
+        combined_headers = []
+        actual_header_df = header_candidates.iloc[:header_rows_count]
+        
+        for col_idx in range(len(actual_header_df.columns)):
+            levels = actual_header_df.iloc[:, col_idx].dropna().astype(str).tolist()
+            clean_levels = [str(l).strip() for l in levels if str(l).strip().lower() not in ['nan', 'unnamed']]
+            combined_name = "_".join(dict.fromkeys(clean_levels))
+            
+            # Jika kolom tidak punya nama sama sekali setelah dibersihkan
+            if not combined_name: combined_name = f"unnamed_{col_idx}"
+            combined_headers.append(combined_name)
+
+        data_start_idx = first_row_idx + header_rows_count
+        
+        while data_start_idx < len(df_raw) and df_raw.iloc[data_start_idx].dropna().empty:
+            data_start_idx += 1
+
+        df = df_raw.iloc[data_start_idx:].reset_index(drop=True)
+        df.columns = combined_headers
+
+        # ==================================
+        # 2. PEMBERSIHAN KOLOM & BARIS KOSONG
+        # ==================================
+        
+        # Hapus kolom yang namanya kosong sama sekali
+        df = df.loc[:, [bool(str(c).strip()) for c in df.columns]]
+        
+        # Bersihkan nama kolom menggunakan fungsi yang sudah Anda buat
         def clean_header_name(col):
+            if not col: return "unnamed_column"
             c = str(col).strip().lower()
             c = re.sub(r'[^a-z0-9_]', '_', c)
             return re.sub(r'_+', '_', c).strip('_')
 
         df.columns = [clean_header_name(c) for c in df.columns]
 
-        # =========================
-        # 3. HITUNG BARIS KOSONG (SEBELUM DIHAPUS)
-        # =========================
-        empty_rows_count = df.isna().all(axis=1).sum()
+        headers = df.columns.tolist()
 
-        # =========================
-        # 4. HAPUS BARIS KOSONG (BIAR TIDAK MASUK DB)
-        # =========================
-        df = df.dropna(how='all')
+        # Hapus kolom Unnamed yang tidak sengaja terbentuk
+        df = df.loc[:, ~df.columns.str.contains('unnamed')]
+        
+        # Hitung baris kosong sebelum dihapus
+        empty_rows_count = df.isna().all(axis=1).sum()
+        df = df.dropna(how='all').reset_index(drop=True)
 
         # =========================
         # 5. PROSES DATA DENGAN SMART EXTRACTION
         # =========================
         cleaned_records = []
+        total_empty_cells = 0 
 
-        # Scanner Heuristik untuk deteksi kolom spasial
+        # Scanner Heuristik untuk deteksi kolom spasial (Dari Branch Anda)
         spatial_regex = re.compile(r'(?i)(distrik|wilayah|kecamatan|daerah|lokasi)')
+        
+        # Keyword Numerik (Gabungan dari Main dan Branch Anda)
         numeric_keywords = [
             'jumlah', 'nilai', 'harga', 'total', 'value', 'biaya', 
-            'realisasi', 'target', 'skor', 'tahun'
+            'realisasi', 'target', 'skor', 'tahun', 'kapasitas', 'luas'
         ]
 
         for _, row in df.iterrows():
@@ -165,20 +364,29 @@ class CleaningEngine:
             spatial_match_name = None # Marker penampung spasial
 
             for key, val in row_dict.items():
-                if pd.isna(val):
+                if pd.isna(val) or val == "" or str(val).strip().lower() in ['nan', 'n/a', '-', 'null']:
                     processed_row[key] = None
+                    total_empty_cells += 1
                     continue
 
                 # Pipeline Eksekusi Berdasarkan Konteks Header
+                # Cek dulu apakah kolom ini berkaitan dengan spasial/wilayah
                 if spatial_regex.search(str(key)):
                     # Intervensi GIS: Normalisasi nama wilayah menggunakan AI (Fuzzy Match)
                     normalized_val = CleaningEngine.fuzzy_match_district(val)
-                    processed_row[key] = normalized_val
+                    res = normalized_val
                     spatial_match_name = normalized_val # Simpan marker untuk di-extract oleh Controller
+                # Cek jika kolom ini berkaitan dengan angka
                 elif any(kw in str(key).lower() for kw in numeric_keywords):
-                    processed_row[key] = CleaningEngine.clean_numeric_smart(val)
+                    res = CleaningEngine.clean_numeric_smart(val)
+                # Jika bukan keduanya, proses sebagai teks biasa
                 else:
-                    processed_row[key] = CleaningEngine.clean_text_smart(val)
+                    res = CleaningEngine.clean_text_smart(val)
+
+                if res is None:
+                    total_empty_cells += 1
+                
+                processed_row[key] = res
 
             # Suntikkan Marker Spasial rahasia untuk Grouping & Melting di Ingest Controller
             processed_row["_spatial_mapping"] = spatial_match_name
@@ -194,4 +402,10 @@ class CleaningEngine:
                 "row_hash": row_hash
             })
 
-        return df.columns.tolist(), cleaned_records, int(empty_rows_count)
+        return {
+            "structure_type": "tabular",
+            "headers": headers,
+            "records": cleaned_records,
+            "empty_rows": int(empty_rows_count),
+            "empty_cells": int(total_empty_cells)
+        }

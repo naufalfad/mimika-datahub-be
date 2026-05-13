@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, extract
+from sqlalchemy import func, extract, over
 from datetime import datetime
 from app.db.session import get_db
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 from app.models import models
+from app.schemas import schemas
+from typing import List, Dict
 
 router = APIRouter()
 
@@ -74,3 +76,65 @@ def get_dashboard_main_stats(db: Session = Depends(get_db)):
         "quality_trend": quality_trend,
         "opd_monthly_monitoring": opd_status
     }
+
+@router.get("/latest-by-category")
+def get_latest_datasets_per_category(db: Session = Depends(get_db)):
+    """
+    Mengambil maksimal 5 dataset terbaru untuk SETIAP kategori.
+    Termasuk informasi Source, Source Type, Description, Year, dan Dataset Type.
+    """
+    
+    # 1. Buat Subquery dengan Window Function (ROW_NUMBER)
+    # Kita mengelompokkan (partition) berdasarkan category_id 
+    # dan mengurutkan berdasarkan tanggal terbaru.
+    subquery = db.query(
+        models.Dataset,
+        func.row_number().over(
+            partition_by=models.Dataset.category_id,
+            order_by=models.Dataset.created_at.desc()
+        ).label("rn")
+    ).filter(models.Dataset.status == "approved").subquery()
+
+    # 2. Gunakan aliased untuk memetakan subquery kembali ke Model Dataset
+    dataset_alias = aliased(models.Dataset, subquery)
+
+    # 3. Eksekusi query: Ambil urutan 1 sampai 5 per kategori
+    # Kita batasi rn <= 5 sesuai permintaan awal Anda
+    results = db.query(dataset_alias).filter(
+        subquery.c.rn <= 1
+    ).all()
+
+    # 4. Kelompokkan data agar Frontend mudah memakainya
+    grouped_data = {}
+    
+    for ds in results:
+        # Ambil data kategori
+        cat_name = ds.category.name if ds.category else "Umum"
+        template = ds.category.template_url if ds.category else None
+        
+        # Inisialisasi grup kategori jika belum ada
+        if cat_name not in grouped_data:
+            grouped_data[cat_name] = {
+                "category_info": {
+                    "name": cat_name,
+                    "template_url": template
+                },
+                "datasets": []
+            }
+            
+        # 5. Tambahkan dataset dengan informasi lengkap
+        grouped_data[cat_name]["datasets"].append({
+            "id": ds.id,
+            "title": ds.title,
+            "description": ds.description,
+            "year": ds.year,
+            "dataset_type": ds.dataset_type, # 'pemerintah' / 'non-pemerintah'
+            "image_url": ds.image_url,
+            "created_at": ds.created_at,
+            # Data dari relasi Source (owner)
+            "source_id": ds.source_id,
+            "source_name": ds.owner.name if ds.owner else "Unknown",
+            "source_type": ds.category.name if ds.category else "Unknown", # Misalnya: 'opd', 'bps', dll
+        })
+
+    return grouped_data

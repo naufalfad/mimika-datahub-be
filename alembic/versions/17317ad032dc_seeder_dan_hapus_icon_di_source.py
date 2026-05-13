@@ -35,8 +35,7 @@ def upgrade() -> None:
 
     category_table = table('categories',
         column('id', sa.Integer),
-        column('name', sa.String),
-       
+        column('name', sa.String)
     )
 
     source_type_table = table('source_type',
@@ -50,7 +49,7 @@ def upgrade() -> None:
         {'id': 2, 'name': 'Eksternal'},
     ])
 
-    # 2. Seed Data Category
+    # 2. Seed Data Category (Dari Branch Anda)
     op.bulk_insert(category_table, [
         {'id': 1, 'name': 'Kependudukan'},
         {'id': 2, 'name': 'Kesehatan'},

@@ -51,7 +51,7 @@ class CategoryCreate(BaseModel):
 class CategoryOut(BaseModel):
     id: int
     name: str
-    image_url: Optional[str] = None
+    template_url: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -59,7 +59,6 @@ class CategoryOut(BaseModel):
 class SourceBase(BaseModel):
     name: str
     type: str
-    icon: Optional[str] = "fa-database"
 
 class SourceCreate(SourceBase):
     pass
@@ -108,7 +107,8 @@ class DatasetOut(DatasetCreate):
 class Stats(BaseModel):
     inserted: int
     duplicates: int
-    empty: int
+    empty_rows: int
+    empty_cells: int
     total: int
     quality_score: float
 
@@ -130,6 +130,7 @@ class SurveyCreate(BaseModel):
 
 class SurveyResponseCreate(BaseModel):
     survey_id: int
+    email: Optional[str] = None
     answers: Dict[str, Any]
 
 # --- USER SCHEMAS ---
@@ -183,3 +184,15 @@ class SidebarStats(BaseModel):
     sources: List[FilterItem]
     source_types: List[FilterItem]
     years: List[FilterItem]
+
+class DatasetRecentOut(BaseModel):
+    id: int
+    title: str
+    image_url: Optional[str]
+    template_url: Optional[str] # Diambil dari relasi kategori
+    category_name: str
+    source_name: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

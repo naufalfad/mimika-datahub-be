@@ -41,7 +41,7 @@ class Category(Base):
     __tablename__ = "categories"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)
-    image_url = Column(String, nullable=True)
+    template_url = Column(String, nullable=True)
     
     datasets = relationship("Dataset", back_populates="category")
 
@@ -73,6 +73,8 @@ class Dataset(Base):
     period = Column(String)
     description = Column(Text)
     view_count = Column(Integer, default=0)
+    image_url = Column(String, nullable=True)
+    # merged_image_url = Column(String, nullable=True)
 
     total_rows = Column(Integer, default=0)
     quality_score = Column(Float, default=0.0) # Skor 0-100
@@ -83,6 +85,7 @@ class Dataset(Base):
     
     # Workflow Persetujuan Data
     status = Column(String, default="pending")
+    structure_type = Column(String, default="tabular")
     
     # Workflow Karantina Spasial (Fase 4 - Anomaly Handling)
     spatial_status = Column(String, default="mapped") # "mapped" jika dikenali AI, "unmapped" jika gagal dikenali
@@ -134,7 +137,8 @@ class SurveyResponse(Base):
     id = Column(Integer, primary_key=True, index=True)
     survey_id = Column(Integer, ForeignKey("surveys.id"))
     # Menyimpan jawaban responden: {"pertanyaan_1": "Sangat Puas", "pertanyaan_2": 5}
-    answers = Column(JSON) 
+    answers = Column(JSON)
+    email = Column(String, nullable=True) 
     submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     survey = relationship("Survey", back_populates="responses")
