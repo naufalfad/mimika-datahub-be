@@ -63,7 +63,8 @@ class DatasetOut(DatasetCreate):
 class Stats(BaseModel):
     inserted: int
     duplicates: int
-    empty: int
+    empty_rows: int
+    empty_cells: int
     total: int
     quality_score: float
 
