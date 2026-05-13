@@ -17,8 +17,7 @@ def create_source(source_in: schemas.SourceCreate, db: Session = Depends(get_db)
     
     new_source = models.Source(
         name=source_in.name,
-        type=source_in.type,
-        icon=source_in.icon
+        type=source_in.type
     )
     db.add(new_source)
     db.commit()

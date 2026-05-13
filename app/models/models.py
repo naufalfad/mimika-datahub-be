@@ -1,7 +1,31 @@
-from sqlalchemy import Column, Integer, Float, String, ForeignKey, DateTime, JSON, Float, Text, Boolean
+from sqlalchemy import Column, Integer, Float, String, ForeignKey, DateTime, JSON, Text, Boolean
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 import datetime
+
+class District(Base):
+    """Tabel Master Distrik (Wilayah Administratif Kabupaten Mimika)"""
+    __tablename__ = "districts"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True, nullable=False)
+    
+    datasets = relationship("Dataset", back_populates="district")
+    # Relasi One-to-One ke DistrictProfile
+    profile = relationship("DistrictProfile", back_populates="district", uselist=False, cascade="all, delete-orphan")
+
+class DistrictProfile(Base):
+    """Tabel Master Data Statis untuk Informasi Profil Distrik (Pop-up Peta)"""
+    __tablename__ = "district_profiles"
+    id = Column(Integer, primary_key=True, index=True)
+    # unique=True memastikan 1 Distrik hanya memiliki 1 Profil
+    district_id = Column(Integer, ForeignKey("districts.id"), unique=True, nullable=False)
+    
+    luas_wilayah = Column(Float, nullable=True) # Dalam km persegi
+    jumlah_penduduk = Column(Integer, nullable=True)
+    deskripsi = Column(Text, nullable=True)
+    batas_wilayah = Column(Text, nullable=True) # Misal: "Utara: Kab. A, Selatan: Laut Arafura"
+    
+    district = relationship("District", back_populates="profile")
 
 class Source(Base):
     """Tabel OPD atau Sumber Data (BPS, Dinas Kesehatan, dll)"""
@@ -40,6 +64,10 @@ class Dataset(Base):
     source_id = Column(Integer, ForeignKey("sources.id"))
     category_id = Column(Integer, ForeignKey("categories.id"))
     source_type_id = Column(Integer, ForeignKey("source_type.id"))
+    
+    # Penambahan Foreign Key untuk Relasi Spasial (GIS)
+    # nullable=True agar dataset tingkat Kabupaten (non-distrik) tetap dapat disimpan
+    district_id = Column(Integer, ForeignKey("districts.id"), nullable=True)
 
     year = Column(Integer)
     period = Column(String)
@@ -54,7 +82,14 @@ class Dataset(Base):
     
     # Kita simpan daftar kolom yang sudah dirapikan di sini (misal: ["nama", "tahun", "jumlah"])
     headers = Column(JSON) 
+    
+    # Workflow Persetujuan Data
     status = Column(String, default="pending")
+    structure_type = Column(String, default="tabular")
+    
+    # Workflow Karantina Spasial (Fase 4 - Anomaly Handling)
+    spatial_status = Column(String, default="mapped") # "mapped" jika dikenali AI, "unmapped" jika gagal dikenali
+    needs_review = Column(Boolean, default=False) # Flag penanda butuh intervensi manual dari Admin
     
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
@@ -63,6 +98,9 @@ class Dataset(Base):
     category = relationship("Category", back_populates="datasets")
     sourceType = relationship("SourceType", back_populates="datasets")
     uploader = relationship("User")
+    
+    # Penambahan Relationship ke entitas District
+    district = relationship("District", back_populates="datasets")
 
 class DataRow(Base):
     """Tabel Penampung Isi File yang Sudah Bersih"""

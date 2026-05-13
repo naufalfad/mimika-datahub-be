@@ -1,41 +1,39 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.db.session import engine, Base
-from app.api.api_router import api_router
 from fastapi.staticfiles import StaticFiles
 import os
 
-# PENTING: Impor models di sini agar SQLAlchemy mengenali tabel-tabelnya
-# from app.models import models 
+from app.api.api_router import api_router
 
-# # Perintah paksa buat tabel
-# print("Sedang membuat tabel...")
-# try:
-#     Base.metadata.create_all(bind=engine)
-#     print("Tabel berhasil dibuat atau sudah ada.")
-# except Exception as e:
-#     print(f"Gagal membuat tabel: {e}")
+app = FastAPI(
+    title="Mimika DataHub - Versi 1",
+    description="Core Backend API with Spatial/GIS Capabilities"
+)
 
-app = FastAPI(title="Mimika DataHub - Versi 1")
-
+# Inisialisasi folder static untuk aset publik jika diperlukan
 if not os.path.exists("static"):
     os.makedirs("static")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# Daftar whitelist domain (Disiapkan untuk transisi ke Production)
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    # "https://domain-production-anda.com",
 ]
 
-# Setting CORS
+# Konfigurasi CORS Middleware
+# Saat ini menggunakan ["*"] untuk kelancaran fase development.
+# Sangat krusial agar Map Viewer di Frontend bebas melakukan fetch API GIS.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # Ganti menjadi `allow_origins=origins` saat deploy ke server
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Registrasi Router Utama
 app.include_router(api_router, prefix="/api/v1")
 
 @app.get("/")

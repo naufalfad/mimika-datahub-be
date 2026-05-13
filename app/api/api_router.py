@@ -1,5 +1,8 @@
 from fastapi import APIRouter
-from app.api.endpoints import categories, sources, datasets, data_ingest, data_view, dashboard, brida, auth, source_type, users, monitoring
+from app.api.endpoints import (
+    categories, sources, datasets, data_ingest, data_view, 
+    dashboard, brida, auth, source_type, users, monitoring, gis
+)
 
 api_router = APIRouter()
 
@@ -13,5 +16,10 @@ api_router.include_router(datasets.router, prefix="/datasets", tags=["2. Master 
 api_router.include_router(data_ingest.router, prefix="/ingest", tags=["3. Process - Upload & Cleaning"])
 api_router.include_router(data_view.router, prefix="/view", tags=["4. Access - View & Catalog"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["5. Analytics - Dashboard"])
+
+# Registrasi Endpoint Spasial (GIS)
+# Diletakkan pada kluster Analytics karena fungsinya sebagai agregator data analitik
+api_router.include_router(gis.router, prefix="/gis", tags=["5. Analytics - GIS / Spatial"])
+
 api_router.include_router(brida.router, prefix="/brida", tags=["6. Analytics - Survey"])
 api_router.include_router(auth.router, prefix="/auth", tags=["7. Auth - Login"])

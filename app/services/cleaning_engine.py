@@ -4,8 +4,129 @@ import hashlib
 import json
 import re
 import numpy as np
+from rapidfuzz import process, fuzz
 
 class CleaningEngine:
+    @staticmethod
+    def is_semi_structured(df_raw):
+
+        # banyak merged header khas html xls
+        repeated_header_pattern = False
+
+        for i in range(min(5, len(df_raw))):
+
+            row = df_raw.iloc[i]
+
+            values = []
+
+            for v in row:
+                if pd.notna(v):
+
+                    s = str(v).strip().lower()
+
+                    if s not in ["nan", "none", ""]:
+                        values.append(s)
+
+            if len(values) >= 3:
+
+                unique_ratio = len(set(values)) / len(values)
+
+                # merged cell khas html
+                if unique_ratio < 0.5:
+                    repeated_header_pattern = True
+
+        # banyak unnamed/merged style
+        merged_like_columns = (
+            df_raw.shape[1] >= 6
+        )
+
+        return repeated_header_pattern and merged_like_columns
+
+    @staticmethod
+    def detect_row_type(row):
+        values = [
+            str(v).strip()
+            for v in row
+            if pd.notna(v)
+        ]
+
+        if not values:
+            return "empty"
+
+        # section/title
+        if len(values) == 1 and len(values[0]) > 10:
+            return "section"
+
+        numeric_count = sum(
+            1 for v in values
+            if re.match(r'^[\d.,]+$', v)
+        )
+
+        if numeric_count >= 1:
+            return "data"
+
+        return "unknown"
+
+    @staticmethod
+    def parse_semi_structured(df_raw):
+        cleaned_records = []
+
+        current_section = "general"
+
+        for idx, row in df_raw.iterrows():
+
+            row_type = CleaningEngine.detect_row_type(row)
+
+            values = [
+                str(v).strip()
+                for v in row
+                if pd.notna(v)
+            ]
+
+            if row_type == "section":
+                current_section = values[0]
+                continue
+
+            if row_type != "data":
+                continue
+
+            semantic_data = {}
+
+            if len(values) >= 1:
+                semantic_data["label"] = CleaningEngine.clean_text_smart(values[0])
+
+            # ambil angka pertama
+            numeric_values = []
+
+            for val in values[1:]:
+                cleaned = CleaningEngine.clean_numeric_smart(val)
+
+                if isinstance(cleaned, (int, float)):
+                    numeric_values.append(cleaned)
+
+            if numeric_values:
+                semantic_data["nilai"] = numeric_values[0]
+
+            if len(values) >= 3:
+                semantic_data["metadata"] = values[2:]
+
+            semantic_data["section"] = current_section
+
+            row_json = json.dumps(semantic_data, sort_keys=True, default=str)
+
+            cleaned_records.append({
+                "content": semantic_data,
+                "row_hash": hashlib.md5(row_json.encode()).hexdigest()
+            })
+
+        return {
+            "structure_type": "semi_structured",
+            "headers": ["section", "label", "nilai", "metadata"],
+            "records": cleaned_records,
+            "empty_rows": 0,
+            "empty_cells": 0
+        }
+
     @staticmethod
     def clean_text_smart(text: str) -> str:
         """Pembersihan teks: spasi tanda baca, double space, dan title case"""
@@ -70,6 +191,39 @@ class CleaningEngine:
             return str(val).strip() # Balikkan string jika gagal konversi
 
     @staticmethod
+    def fuzzy_match_district(val: any) -> str:
+        """
+        AI Parser: Menggunakan Levenshtein Distance untuk mendeteksi nama distrik.
+        Akan mereturn nama standar jika similarity >= 80%.
+        """
+        if pd.isna(val) or val is None or str(val).strip() == "":
+            return None
+            
+        text = str(val).strip().lower()
+        
+        # 1. Strip Prefiks Umum (Misal: "Kec.", "Kecamatan", "Distrik", "Wilayah")
+        text = re.sub(r'^(kecamatan|kec\.|distrik|wilayah)\s*', '', text).strip()
+        
+        # 2. Kamus Absolut 18 Distrik di Mimika (Sesuai rujukan spasial GeoJSON)
+        master_districts = [
+            "Mimika Baru", "Kuala Kencana", "Tembagapura", "Wania", "Iwaka",
+            "Kwamki Narama", "Mimika Timur", "Mimika Tengah", "Mimika Barat",
+            "Agimuga", "Jila", "Jita", "Mimika Timur Jauh", "Mimika Barat Jauh",
+            "Mimika Barat Tengah", "Amar", "Hoya", "Alama"
+        ]
+        
+        # 3. Ekstraksi kemiripan dengan algoritma WRatio (Rapidfuzz)
+        match = process.extractOne(text, master_districts, scorer=fuzz.WRatio)
+        
+        if match:
+            best_match, score, _ = match
+            if score >= 80: # Threshold aman untuk toleransi typo dari OPD
+                return best_match
+                
+        # Jika tidak ada kecocokan absolut, kembalikan ke pembersihan teks standar.
+        return CleaningEngine.clean_text_smart(val)
+
+    @staticmethod
     def clean_and_align(file_contents: bytes, filename: str = ""):
         """Membaca file dan melakukan pembersihan data secara otomatis"""
         ext = filename.split('.')[-1].lower() if filename else ""
@@ -104,7 +258,10 @@ class CleaningEngine:
             raise Exception(f"Gagal membaca isi file {ext if ext else ''}: {str(e)}")
 
         # === PERBAIKAN 1: Netralkan struktur kolom dari bawaan HTML/Excel ===
-        df_raw.columns = range(df_raw.shape[1]) 
+        df_raw.columns = range(df_raw.shape[1])
+
+        if CleaningEngine.is_semi_structured(df_raw):
+            return CleaningEngine.parse_semi_structured(df_raw)
 
         # === PERBAIKAN 3: Bersihkan spasi kosong dengan aman (hanya pada kolom string) ===
         df_raw = df_raw.replace({'\xa0': ' '}, regex=True)
@@ -177,6 +334,8 @@ class CleaningEngine:
 
         df.columns = [clean_header_name(c) for c in df.columns]
 
+        headers = df.columns.tolist()
+
         # Hapus kolom Unnamed yang tidak sengaja terbentuk
         df = df.loc[:, ~df.columns.str.contains('unnamed')]
         
@@ -185,14 +344,24 @@ class CleaningEngine:
         df = df.dropna(how='all').reset_index(drop=True)
 
         # =========================
-        # 5. PROSES DATA
+        # 5. PROSES DATA DENGAN SMART EXTRACTION
         # =========================
         cleaned_records = []
         total_empty_cells = 0 
 
+        # Scanner Heuristik untuk deteksi kolom spasial (Dari Branch Anda)
+        spatial_regex = re.compile(r'(?i)(distrik|wilayah|kecamatan|daerah|lokasi)')
+        
+        # Keyword Numerik (Gabungan dari Main dan Branch Anda)
+        numeric_keywords = [
+            'jumlah', 'nilai', 'harga', 'total', 'value', 'biaya', 
+            'realisasi', 'target', 'skor', 'tahun', 'kapasitas', 'luas'
+        ]
+
         for _, row in df.iterrows():
             row_dict = row.to_dict()
             processed_row = {}
+            spatial_match_name = None # Marker penampung spasial
 
             for key, val in row_dict.items():
                 if pd.isna(val) or val == "" or str(val).strip().lower() in ['nan', 'n/a', '-', 'null']:
@@ -200,15 +369,17 @@ class CleaningEngine:
                     total_empty_cells += 1
                     continue
 
-                # Cek apakah kolom ini kemungkinan berisi angka
-                numeric_keywords = [
-                    'jumlah', 'nilai', 'harga', 'total',
-                    'value', 'biaya', 'realisasi',
-                    'target', 'skor', 'tahun', 'kapasitas', 'luas'
-                ]
-
-                if any(kw in key for kw in numeric_keywords):
+                # Pipeline Eksekusi Berdasarkan Konteks Header
+                # Cek dulu apakah kolom ini berkaitan dengan spasial/wilayah
+                if spatial_regex.search(str(key)):
+                    # Intervensi GIS: Normalisasi nama wilayah menggunakan AI (Fuzzy Match)
+                    normalized_val = CleaningEngine.fuzzy_match_district(val)
+                    res = normalized_val
+                    spatial_match_name = normalized_val # Simpan marker untuk di-extract oleh Controller
+                # Cek jika kolom ini berkaitan dengan angka
+                elif any(kw in str(key).lower() for kw in numeric_keywords):
                     res = CleaningEngine.clean_numeric_smart(val)
+                # Jika bukan keduanya, proses sebagai teks biasa
                 else:
                     res = CleaningEngine.clean_text_smart(val)
 
@@ -216,6 +387,9 @@ class CleaningEngine:
                     total_empty_cells += 1
                 
                 processed_row[key] = res
+
+            # Suntikkan Marker Spasial rahasia untuk Grouping & Melting di Ingest Controller
+            processed_row["_spatial_mapping"] = spatial_match_name
 
             # =========================
             # 6. HASH (UNTUK DETEKSI DUPLIKAT)
@@ -228,4 +402,10 @@ class CleaningEngine:
                 "row_hash": row_hash
             })
 
-        return df.columns.tolist(), cleaned_records, int(empty_rows_count), int(total_empty_cells)
+        return {
+            "structure_type": "tabular",
+            "headers": headers,
+            "records": cleaned_records,
+            "empty_rows": int(empty_rows_count),
+            "empty_cells": int(total_empty_cells)
+        }
