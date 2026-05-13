@@ -1,8 +1,8 @@
-"""merge heads
+"""merge_spatial_and_cloudinary_v2
 
-Revision ID: aa9ef8f75313
-Revises: add_spatial_entities, 45caa2a31f73
-Create Date: 2026-05-12 12:43:23.244612
+Revision ID: 979b9aaa7980
+Revises: 72a6b426750b, df4e62abe04e, e07ddef9c19f
+Create Date: 2026-05-13 12:22:47.899481
 
 """
 from typing import Sequence, Union
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'aa9ef8f75313'
-down_revision: Union[str, Sequence[str], None] = ('add_spatial_entities', '45caa2a31f73')
+revision: str = '979b9aaa7980'
+down_revision: Union[str, Sequence[str], None] = ('72a6b426750b', 'df4e62abe04e', 'e07ddef9c19f')
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

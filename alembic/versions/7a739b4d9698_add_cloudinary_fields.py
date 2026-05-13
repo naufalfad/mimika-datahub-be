@@ -26,12 +26,11 @@ def upgrade() -> None:
     # op.add_column('datasets', sa.Column('merged_image_url', sa.String(), nullable=True))
     # ### end Alembic commands ###
     op.execute(
-        "INSERT INTO categories (name, template_url) VALUES "
-        "('Kependudukan', 'https://res.cloudinary.com/drcgddki1/image/upload/v1778482405/kategori_kependudukan-removebg-preview_k0nkgl.png'),"
-        "('Kesehatan', 'https://res.cloudinary.com/drcgddki1/image/upload/v1778482406/kategori_kesehatan-removebg-preview_y4numn.png'),"
-        "('Pendidikan', 'https://res.cloudinary.com/drcgddki1/image/upload/v1778482405/grok-image-8335bf9b-7580-4d59-b16e-c85a80e366dc-removebg-preview__2_-removebg-preview_1_edxbjq.png'),"
-        "('Ekonomi', 'https://res.cloudinary.com/drcgddki1/image/upload/v1778482405/grok-image-975e1b97-dfc0-4056-8118-d4293f6fb069-removebg-preview__1_-removebg-preview_fb1ygq.png'),"
-        "('Infrastruktur', 'https://res.cloudinary.com/drcgddki1/image/upload/v1778482405/grok-image-8a7e1a30-fff8-4965-8a01-1e3d318a6f20__1_-removebg-preview__1_-removebg-preview_ecfbwi.png')"
+        "UPDATE categories SET template_url = 'https://res.cloudinary.com/drcgddki1/image/upload/v1778482405/kategori_kependudukan-removebg-preview_k0nkgl.png' WHERE name = 'Kependudukan';"
+        "UPDATE categories SET template_url = 'https://res.cloudinary.com/drcgddki1/image/upload/v1778482406/kategori_kesehatan-removebg-preview_y4numn.png' WHERE name = 'Kesehatan';"
+        "UPDATE categories SET template_url = 'https://res.cloudinary.com/drcgddki1/image/upload/v1778482405/grok-image-8335bf9b-7580-4d59-b16e-c85a80e366dc-removebg-preview__2_-removebg-preview_1_edxbjq.png' WHERE name = 'Pendidikan';"
+        "UPDATE categories SET template_url = 'https://res.cloudinary.com/drcgddki1/image/upload/v1778482405/grok-image-975e1b97-dfc0-4056-8118-d4293f6fb069-removebg-preview__1_-removebg-preview_fb1ygq.png' WHERE name = 'Ekonomi';"
+        "UPDATE categories SET template_url = 'https://res.cloudinary.com/drcgddki1/image/upload/v1778482405/grok-image-8a7e1a30-fff8-4965-8a01-1e3d318a6f20__1_-removebg-preview__1_-removebg-preview_ecfbwi.png' WHERE name = 'Infrastruktur';"
     )
 
 
