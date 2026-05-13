@@ -99,7 +99,8 @@ class SurveyResponse(Base):
     id = Column(Integer, primary_key=True, index=True)
     survey_id = Column(Integer, ForeignKey("surveys.id"))
     # Menyimpan jawaban responden: {"pertanyaan_1": "Sangat Puas", "pertanyaan_2": 5}
-    answers = Column(JSON) 
+    answers = Column(JSON)
+    email = Column(String, nullable=True) 
     submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     survey = relationship("Survey", back_populates="responses")
