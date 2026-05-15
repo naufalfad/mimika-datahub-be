@@ -29,9 +29,7 @@ async def upload_and_process_form(
     period: str = Form(...),
     description: str = Form(None),
     district_id: Optional[int] = Form(None),
-    district_id: Optional[int] = Form(None),
     file: UploadFile = File(...),
-    image: UploadFile = File(...),
     image: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
@@ -104,19 +102,6 @@ async def upload_and_process_form(
             empty_cells_count = clean_result["empty_cells"]
             structure_type = clean_result.get("structure_type", "structured")
 
-    # --- 4. LOGIKA PERCABANGAN FILE ---
-
-    if is_tabular:
-        try:
-            # A. Jalankan Cleaning Engine
-            clean_result = CleaningEngine.clean_and_align(contents, filename=file.filename)
-            
-            headers = clean_result["headers"]
-            cleaned_records = clean_result["records"]
-            empty_rows_count = clean_result["empty_rows"]
-            empty_cells_count = clean_result["empty_cells"]
-            structure_type = clean_result.get("structure_type", "structured")
-
             # B. INTERVENSI GIS: GROUPING & ROW MELTING
             district_map = {d.name.lower().strip(): d.id for d in db.query(models.District).all()}
             grouped_records = {}
@@ -124,23 +109,21 @@ async def upload_and_process_form(
             for rec in cleaned_records:
                 content = rec["content"]
                 
-                # 1. Coba ambil mapping dari cleaning engine jika ada
-                mapped_name = content.pop("_spatial_mapping", None)
-                
-                # 2. LOGIKA TAMBAHAN: Jika _spatial_mapping kosong, cari di dalam cell content
                 target_district_id = district_id # Default ke input form jika ada
+                mapped_name = content.pop("_spatial_mapping", None)
                 
                 if mapped_name:
                     # Jika engine menemukan kolom spesifik (misal kolom 'district')
                     target_district_id = district_map.get(mapped_name.lower().strip(), target_district_id)
                 else:
                     # Jika tidak ada kolom spesifik, scan SEMUA isi cell di baris ini
-                    for cell_value in content.values():
-                        if isinstance(cell_value, str):
-                            val_clean = cell_value.lower().strip()
-                            if val_clean in district_map:
-                                target_district_id = district_map[val_clean]
-                                break
+                    if target_district_id is None:
+                        for cell_value in content.values():
+                            if isinstance(cell_value, str):
+                                val_clean = cell_value.lower().strip()
+                                if val_clean in district_map:
+                                    target_district_id = district_map[val_clean]
+                                    break
 
                 is_unmapped = (target_district_id is None)
                 group_key = (target_district_id, is_unmapped)
@@ -235,11 +218,6 @@ async def upload_and_process_form(
             # Kalkulasi skor kualitas rata-rata total untuk return
             total_potential = len(cleaned_records) * (3 if structure_type == "semi_structured" else len(headers))
             overall_q_score = ((total_potential - empty_cells_count) / total_potential * 100) if total_potential > 0 else 100.0
-            db.commit()
-
-            # Kalkulasi skor kualitas rata-rata total untuk return
-            total_potential = len(cleaned_records) * (3 if structure_type == "semi_structured" else len(headers))
-            overall_q_score = ((total_potential - empty_cells_count) / total_potential * 100) if total_potential > 0 else 100.0
 
         except Exception as e:
             db.rollback()
@@ -260,53 +238,7 @@ async def upload_and_process_form(
                 source_id=source_id,
                 category_id=category_id,
                 source_type_id=source_type_id,
-                year=year,
-                period=period,
-                description=description,
-                status=initial_status,
-                user_id=current_user.id,
-                image_url=photo_url,
-                file_url=file_url, # Simpan URL dokumen
-                headers=["Dokumen"],
-                structure_type="document",
-                total_rows=1,
-                quality_score=100.0
-            )
-            db.add(new_dataset)
-            db.commit()
-            db.refresh(new_dataset)
-
-            # Set variabel untuk return response
-            first_dataset_id = new_dataset.id
-            headers = ["Dokumen"]
-            total_inserted = 1
-            overall_q_score = 100.0
-            structure_type = "document"
-
-        except Exception as e:
-            db.rollback()
-            raise HTTPException(status_code=500, detail=f"Gagal upload dokumen: {str(e)}")
-
-    # 5. Return Agregasi ke Frontend
-        except Exception as e:
-            db.rollback()
-            raise HTTPException(status_code=500, detail=f"Gagal memproses data tabular: {str(e)}")
-
-    elif is_document:
-        try:
-            # Proses Upload Dokumen (PDF/Word) ke Cloudinary
-            file_url, file_public_id = upload_image_to_cloudinary(
-                contents, 
-                folder_name="mimika_datahub/documents",
-                resource_type="raw"
-            )
-            
-            new_dataset = models.Dataset(
-                title=title,
-                dataset_type=dataset_type,
-                source_id=source_id,
-                category_id=category_id,
-                source_type_id=source_type_id,
+                district_id=district_id,
                 year=year,
                 period=period,
                 description=description,
