@@ -11,7 +11,7 @@ from sqlalchemy.sql import table, column
 
 # revision identifiers, used by Alembic.
 revision = 'add_spatial_entities'
-down_revision = None # Sesuaikan dengan ID revisi sebelumnya di folder versions
+down_revision = '17317ad032dc'
 branch_labels = None
 depends_on = None
 

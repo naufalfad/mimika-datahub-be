@@ -5,6 +5,10 @@ import json
 import hashlib
 from datetime import datetime
 
+import json
+import hashlib
+from datetime import datetime
+
 from app.db.session import get_db
 from app.models import models
 from app.schemas import schemas
@@ -25,7 +29,9 @@ async def upload_and_process_form(
     period: str = Form(...),
     description: str = Form(None),
     district_id: Optional[int] = Form(None),
+    district_id: Optional[int] = Form(None),
     file: UploadFile = File(...),
+    image: UploadFile = File(...),
     image: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
@@ -41,10 +47,22 @@ async def upload_and_process_form(
     structure_type = "tabular" # default
 
     # 2. Validasi Kategori
+    # --- 1. INISIALISASI VARIABEL AWAL (Agar tidak UnboundLocalError) ---
+    headers = []
+    total_inserted = 0
+    total_duplicates = 0
+    empty_rows_count = 0
+    empty_cells_count = 0
+    overall_q_score = 0.0
+    first_dataset_id = 0
+    structure_type = "tabular" # default
+
+    # 2. Validasi Kategori
     category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not category:
         raise HTTPException(status_code=400, detail="Kategori tidak ditemukan")
 
+    # 3. Upload Gambar Cover ke Cloudinary
     # 3. Upload Gambar Cover ke Cloudinary
     try:
         image_bytes = await image.read()
@@ -63,7 +81,28 @@ async def upload_and_process_form(
     if not is_tabular and not is_document:
         raise HTTPException(status_code=400, detail="Format file tidak didukung.")
 
+    initial_status = "approved" if current_user.role == "admin" else "pending"
+    filename = file.filename.lower()
+    is_tabular = filename.endswith(('.xlsx', '.xls', '.csv'))
+    is_document = filename.endswith(('.pdf', '.doc', '.docx'))
+
+    if not is_tabular and not is_document:
+        raise HTTPException(status_code=400, detail="Format file tidak didukung.")
+
     contents = await file.read()
+
+    # --- 4. LOGIKA PERCABANGAN FILE ---
+
+    if is_tabular:
+        try:
+            # A. Jalankan Cleaning Engine
+            clean_result = CleaningEngine.clean_and_align(contents, filename=file.filename)
+            
+            headers = clean_result["headers"]
+            cleaned_records = clean_result["records"]
+            empty_rows_count = clean_result["empty_rows"]
+            empty_cells_count = clean_result["empty_cells"]
+            structure_type = clean_result.get("structure_type", "structured")
 
     # --- 4. LOGIKA PERCABANGAN FILE ---
 
@@ -196,7 +235,59 @@ async def upload_and_process_form(
             # Kalkulasi skor kualitas rata-rata total untuk return
             total_potential = len(cleaned_records) * (3 if structure_type == "semi_structured" else len(headers))
             overall_q_score = ((total_potential - empty_cells_count) / total_potential * 100) if total_potential > 0 else 100.0
+            db.commit()
 
+            # Kalkulasi skor kualitas rata-rata total untuk return
+            total_potential = len(cleaned_records) * (3 if structure_type == "semi_structured" else len(headers))
+            overall_q_score = ((total_potential - empty_cells_count) / total_potential * 100) if total_potential > 0 else 100.0
+
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Gagal memproses data tabular: {str(e)}")
+
+    elif is_document:
+        try:
+            # Proses Upload Dokumen (PDF/Word) ke Cloudinary
+            file_url, file_public_id = upload_image_to_cloudinary(
+                contents, 
+                folder_name="mimika_datahub/documents",
+                resource_type="raw"
+            )
+            
+            new_dataset = models.Dataset(
+                title=title,
+                dataset_type=dataset_type,
+                source_id=source_id,
+                category_id=category_id,
+                source_type_id=source_type_id,
+                year=year,
+                period=period,
+                description=description,
+                status=initial_status,
+                user_id=current_user.id,
+                image_url=photo_url,
+                file_url=file_url, # Simpan URL dokumen
+                headers=["Dokumen"],
+                structure_type="document",
+                total_rows=1,
+                quality_score=100.0
+            )
+            db.add(new_dataset)
+            db.commit()
+            db.refresh(new_dataset)
+
+            # Set variabel untuk return response
+            first_dataset_id = new_dataset.id
+            headers = ["Dokumen"]
+            total_inserted = 1
+            overall_q_score = 100.0
+            structure_type = "document"
+
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Gagal upload dokumen: {str(e)}")
+
+    # 5. Return Agregasi ke Frontend
         except Exception as e:
             db.rollback()
             raise HTTPException(status_code=500, detail=f"Gagal memproses data tabular: {str(e)}")
@@ -247,7 +338,9 @@ async def upload_and_process_form(
     return {
         "status": "success",
         "dataset_id": first_dataset_id,
+        "dataset_id": first_dataset_id,
         "headers_found": headers,
+        "message": f"File {filename} berhasil diproses sebagai {structure_type}",
         "message": f"File {filename} berhasil diproses sebagai {structure_type}",
         "stats": {
             "inserted": total_inserted,
