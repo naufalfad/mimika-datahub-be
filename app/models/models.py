@@ -74,6 +74,7 @@ class Dataset(Base):
     description = Column(Text)
     view_count = Column(Integer, default=0)
     image_url = Column(String, nullable=True)
+    file_url = Column(String, nullable=True)
     # merged_image_url = Column(String, nullable=True)
 
     total_rows = Column(Integer, default=0)
