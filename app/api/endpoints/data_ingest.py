@@ -3,10 +3,9 @@ from sqlalchemy.orm import Session
 from typing import Optional
 import json
 import hashlib
-from datetime import datetime
-
-import json
-import hashlib
+import os
+import shutil
+from pathlib import Path
 from datetime import datetime
 
 from app.db.session import get_db
@@ -17,6 +16,8 @@ from app.api.deps import get_current_user
 from app.core.cloudinary_config import upload_image_to_cloudinary
 
 router = APIRouter()
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
 
 @router.post("/upload-process", response_model=schemas.UploadResponse)
 async def upload_and_process_form(
@@ -64,7 +65,7 @@ async def upload_and_process_form(
     # 3. Upload Gambar Cover ke Cloudinary
     try:
         image_bytes = await image.read()
-        photo_url, photo_public_id = upload_image_to_cloudinary(
+        photo_url, _ = upload_image_to_cloudinary(
             image_bytes, 
             folder_name="mimika_datahub/user_uploads"
         )
@@ -225,12 +226,22 @@ async def upload_and_process_form(
 
     elif is_document:
         try:
-            # Proses Upload Dokumen (PDF/Word) ke Cloudinary
-            file_url, file_public_id = upload_image_to_cloudinary(
-                contents, 
-                folder_name="mimika_datahub/documents",
-                resource_type="raw"
-            )
+            # 1. Tentukan nama file unik
+            file_extension = os.path.splitext(file.filename)[1]
+            unique_filename = f"{hashlib.md5(contents).hexdigest()}{file_extension}"
+            
+            # 2. Tentukan path tujuan
+            doc_folder = UPLOAD_DIR / "documents"
+            doc_folder.mkdir(exist_ok=True)
+            file_path = doc_folder / unique_filename
+            
+            # 3. Simpan file biner secara lokal
+            with open(file_path, "wb") as buffer:
+                buffer.write(contents)
+            
+            # 4. Buat URL akses (Ganti domain_vps.com dengan IP/Domain Anda)
+            base_url = "http://127.0.0.1:8000" # Sesuaikan dengan domain backend
+            file_url = f"{base_url}/uploads/documents/{unique_filename}"
             
             new_dataset = models.Dataset(
                 title=title,
@@ -238,18 +249,19 @@ async def upload_and_process_form(
                 source_id=source_id,
                 category_id=category_id,
                 source_type_id=source_type_id,
-                district_id=district_id,
+                district_id=district_id, # [cite: 1]
                 year=year,
                 period=period,
                 description=description,
                 status=initial_status,
                 user_id=current_user.id,
-                image_url=photo_url,
-                file_url=file_url, # Simpan URL dokumen
+                image_url=photo_url, # Cover tetap bisa di Cloudinary atau lokal
+                file_url=file_url,
                 headers=["Dokumen"],
-                structure_type="document",
+                structure_type="document", # [cite: 3]
                 total_rows=1,
-                quality_score=100.0
+                quality_score=100.0,
+                spatial_status="mapped" if district_id else "unmapped" # [cite: 2]
             )
             db.add(new_dataset)
             db.commit()

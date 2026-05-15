@@ -38,7 +38,7 @@ def upgrade() -> None:
     op.execute(
         f"INSERT INTO users (username, hashed_password, full_name, role, email, is_active) VALUES "
         f"('admin', '{get_password_hash('password123')}', 'Admin', 'admin', 'admin@gmail.com', true),"
-        f"('user', '{get_password_hash('password123')}', 'Operator OPD', 'user', 'user@gmail.com', true)"
+        f"('user', '{get_password_hash('password123')}', 'Operator OPD', 'user', 'user@gmail.com', true),"
         f"('brida', '{get_password_hash('password123')}', 'BRIDA', 'brida', 'brida@gmail.com', true)"
     )
 

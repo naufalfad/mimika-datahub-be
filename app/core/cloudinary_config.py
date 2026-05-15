@@ -11,17 +11,20 @@ cloudinary.config(
   secure = True
 )
 
-def upload_image_to_cloudinary(file_bytes, folder_name, resource_type="image"):
+def upload_image_to_cloudinary(file_source, folder_name, resource_type="image", filename=None):
     """
-    Mengupload gambar ke Cloudinary. 
-    Cloudinary akan otomatis membuat folder jika belum ada.
+    file_source bisa berupa file_stream atau bytes.
     """
-    result = cloudinary.uploader.upload(
-        file_bytes,
-        folder=folder_name,
-        use_filename=True,
-        unique_filename=True,
-        resource_type=resource_type
-    )
-    # Mengembalikan URL aman dan public_id (format: folder/filename)
+    upload_options = {
+        "folder": folder_name,
+        "resource_type": resource_type,
+        "use_filename": True,
+        "unique_filename": True,
+        "invalidate": True 
+    }
+    
+    if resource_type == "raw" and filename:
+        upload_options["public_id"] = filename
+
+    result = cloudinary.uploader.upload(file_source, **upload_options)
     return result.get("secure_url"), result.get("public_id")

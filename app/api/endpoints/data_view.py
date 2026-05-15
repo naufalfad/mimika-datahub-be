@@ -39,9 +39,12 @@ def get_dataset_content(
         file_url = dataset.file_url
         view_url = file_url  # Default untuk PDF
         
-        # Logika Tambahan: Jika file adalah Word (.doc atau .docx)
-        # Browser tidak bisa render Word secara native, maka gunakan Office Online Viewer
-        if file_url and any(file_url.lower().endswith(ext) for ext in ['.doc', '.docx']):
+        if file_url and file_url.lower().endswith('.pdf'):
+            if "upload/" in file_url:
+                view_url = file_url.replace("upload/", "upload/fl_inline/")
+                
+        # Logika untuk Word tetap sama menggunakan Office Viewer 
+        elif file_url and any(file_url.lower().endswith(ext) for ext in ['.doc', '.docx']):
             view_url = f"https://view.officeapps.live.com/op/view.aspx?src={file_url}"
 
         return {
