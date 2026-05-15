@@ -125,6 +125,35 @@ def get_all_surveys(db: Session = Depends(get_db)):
     surveys = db.query(models.Survey).order_by(models.Survey.created_at.desc()).all()
     return surveys
 
+# ==========================================
+# 1. TAMBAHKAN ENDPOINT STATS (TARUH DI ATAS /{survey_id})
+# ==========================================
+@router.get("/stats")
+def get_survey_stats(db: Session = Depends(get_db)):
+    # Hitung total survey
+    total_surveys = db.query(models.Survey).count()
+    
+    # Hitung survey aktif (asumsi ada field is_active atau cek tanggal)
+    # Jika tidak ada field is_active, bisa disesuaikan logikanya
+    active_surveys = db.query(models.Survey).count() 
+    
+    # Hitung total semua jawaban (responses) dari semua survey
+    total_responses = db.query(models.SurveyResponse).count()
+    
+    # Hitung dataset yang sudah terbentuk dari survey (Source BRIDA)
+    # Kita cari ID source BRIDA dulu
+    brida_source = db.query(models.Source).filter(models.Source.name == "BRIDA").first()
+    datasets_count = 0
+    if brida_source:
+        datasets_count = db.query(models.Dataset).filter(models.Dataset.source_id == brida_source.id).count()
+
+    return {
+        "total": total_surveys,
+        "active": active_surveys,
+        "responses": total_responses,
+        "datasets": datasets_count
+    }
+
 # 5. AMBIL DETAIL SATU SURVEY BESERTA JAWABANNYA (Untuk halaman pengisian form atau hasil analisis)
 @router.get("/{survey_id}")
 def get_survey_detail(survey_id: int, db: Session = Depends(get_db)):
