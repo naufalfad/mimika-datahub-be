@@ -14,6 +14,7 @@ app = FastAPI(
 if not os.path.exists("static"):
     os.makedirs("static")
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Daftar whitelist domain (Disiapkan untuk transisi ke Production)
 origins = [

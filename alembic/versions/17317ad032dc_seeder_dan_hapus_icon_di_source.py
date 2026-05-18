@@ -65,6 +65,7 @@ def upgrade() -> None:
         {'id': 3, 'name': 'Dinas Pendidikan', 'type': 'opd'},
         {'id': 4, 'name': 'Diskominfo', 'type': 'opd'},
         {'id': 5, 'name': 'Bappeda', 'type': 'opd'},
+        {'id': 6, 'name': 'BRIDA', 'type': 'brida'},
     ])
 
 
