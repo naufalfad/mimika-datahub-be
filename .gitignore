@@ -158,3 +158,6 @@ env/
 
 # MacOS
 .DS_Store
+
+#alembic.ini
+alembic.ini

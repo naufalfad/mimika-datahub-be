@@ -1,0 +1,3150 @@
+=== BACKEND STRUCTURE & CODE (PYTHON) ===
+
+
+--- FILE: app\api\api_router.py ---
+from fastapi import APIRouter
+from app.api.endpoints import (
+    categories, sources, datasets, data_ingest, data_view, 
+    dashboard, brida, auth, source_type, users, monitoring, gis, atlas
+)
+
+api_router = APIRouter()
+
+# Grouping Router
+api_router.include_router(users.router, prefix="/users", tags=["0. Admin - User Management"])
+api_router.include_router(monitoring.router, prefix="/monitoring", tags=["0. Admin - Monitoring OPD"])
+api_router.include_router(categories.router, prefix="/categories", tags=["0. Master - Categories"])
+api_router.include_router(source_type.router, prefix="/source-type", tags=["0. Master - Source Type"])
+api_router.include_router(sources.router, prefix="/sources", tags=["1. Master - Sources (OPD)"])
+api_router.include_router(datasets.router, prefix="/datasets", tags=["2. Master - Datasets"])
+api_router.include_router(data_ingest.router, prefix="/ingest", tags=["3. Process - Upload & Cleaning"])
+api_router.include_router(data_view.router, prefix="/view", tags=["4. Access - View & Catalog"])
+api_router.include_router(dashboard.router, prefix="/dashboard", tags=["5. Analytics - Dashboard"])
+
+# Registrasi Endpoint Spasial (GIS)
+# Diletakkan pada kluster Analytics karena fungsinya sebagai agregator data analitik
+api_router.include_router(gis.router, prefix="/gis", tags=["5. Analytics - GIS / Spatial"])
+
+api_router.include_router(brida.router, prefix="/brida", tags=["6. Analytics - Survey"])
+api_router.include_router(auth.router, prefix="/auth", tags=["7. Auth - Login"])
+
+api_router.include_router(atlas.router, prefix="/atlas", tags=["Atlas Scrollytelling"])
+
+--- FILE: app\api\deps.py ---
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import jwt
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.core.security import SECRET_KEY, ALGORITHM
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
+
+def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None: raise HTTPException(status_code=401)
+    except: raise HTTPException(status_code=401, detail="Token tidak valid")
+    
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if not user: raise HTTPException(status_code=404, detail="User tidak ditemukan")
+    return user
+
+# Pengecekan Khusus Admin
+def get_admin_user(current_user: models.User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Hanya Admin yang boleh akses fitur ini")
+    return current_user
+
+--- FILE: app\api\endpoints\atlas.py ---
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import List, Dict, Any
+from app.db.session import get_db
+from app.services.atlas_service import AtlasService
+
+router = APIRouter()
+
+@router.get("/indicators/list", response_model=List[str])
+def list_available_indicators(db: Session = Depends(get_db)):
+    """
+    Mengambil semua daftar kunci indikator (headers) yang tersedia 
+    dari dataset yang sudah disetujui (Approved).
+    """
+    indicators = AtlasService.get_available_indicators(db)
+    if not indicators:
+        return []
+    return indicators
+
+@router.get("/indicators/{indicator_type}")
+def get_atlas_data(indicator_type: str, db: Session = Depends(get_db)):
+    """
+    Endpoint utama untuk Atlas Scrollytelling:
+    Mengembalikan metadata indikator dan data spasial per distrik 
+    untuk di-render menjadi peta Choropleth.
+    """
+    
+    # 1. Ambil data agregat spasial (ID Distrik -> Nilai)
+    spatial_data = AtlasService.get_indicator_data(db, indicator_type)
+    
+    # Validasi: Jika tidak ada data sama sekali untuk indikator tersebut
+    if not spatial_data:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Indikator '{indicator_type}' tidak ditemukan atau belum memiliki data yang valid."
+        )
+    
+    # 2. Ambil metadata (Judul, Satuan, Deskripsi, Warna)
+    metadata = AtlasService.get_indicator_metadata(indicator_type)
+    
+    # 3. Kembalikan response terpadu
+    return {
+        "indicator": indicator_type,
+        "metadata": metadata,
+        "data": spatial_data
+    }
+
+@router.get("/indicators/meta/all")
+def get_all_indicators_metadata(db: Session = Depends(get_db)):
+    """
+    Helper endpoint untuk mendapatkan metadata dari beberapa indikator utama sekaligus.
+    Berguna untuk inisialisasi awal halaman Atlas.
+    """
+    main_indicators = ["stunting", "jumlah_penduduk", "pdrb"]
+    results = []
+    
+    for key in main_indicators:
+        results.append({
+            "key": key,
+            "metadata": AtlasService.get_indicator_metadata(key)
+        })
+        
+    return results
+
+--- FILE: app\api\endpoints\auth.py ---
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.core import security
+from app.api import deps
+from app.schemas import schemas
+
+router = APIRouter()
+
+@router.post("/login")
+def login(db: Session = Depends(get_db), form_data: OAuth2PasswordRequestForm = Depends()):
+    user = db.query(models.User).filter(models.User.username == form_data.username).first()
+    if not user or not security.verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Username atau password salah")
+    
+    return {
+        "access_token": security.create_access_token(user.username),
+        "token_type": "bearer",
+        "role": user.role
+    }
+
+@router.get("/me", response_model=schemas.UserOut)
+def get_user_profile(current_user: models.User = Depends(deps.get_current_user)):
+    """Mengambil data profil user yang sedang login berdasarkan token"""
+    return current_user
+
+@router.post("/logout")
+def logout(current_user: models.User = Depends(deps.get_current_user)):
+    """
+    Endpoint Logout.
+    Karena menggunakan JWT, logout dilakukan dengan cara:
+    1. Backend memberikan respon sukses.
+    2. Frontend HARUS menghapus token dari local storage/cookies.
+    """
+    return {
+        "status": "success", 
+        "message": f"User {current_user.username} berhasil logout."
+    }
+
+--- FILE: app\api\endpoints\brida.py ---
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+from app.api import deps
+
+import hashlib
+import json
+import pandas as pd
+import io
+from datetime import datetime
+
+router = APIRouter()
+
+# 1. BUAT SURVEY BARU
+@router.post("/create")
+def create_survey(survey_in: schemas.SurveyCreate, db: Session = Depends(get_db)):
+    new_survey = models.Survey(**survey_in.dict())
+    db.add(new_survey)
+    db.commit()
+    db.refresh(new_survey)
+    return new_survey
+
+# 2. SUBMIT JAWABAN (Ditembak saat responden mengisi form)
+@router.post("/submit-response")
+def submit_response(res_in: schemas.SurveyResponseCreate, db: Session = Depends(get_db)):
+    # Logika untuk standarisasi anonimitas
+    # Jika email isinya "-", string kosong "", atau "anonim", kita ubah jadi None
+    clean_email = res_in.email.strip() if res_in.email else None
+    if clean_email in ["-", "", "anonim", "anonymous"]:
+        clean_email = None
+
+    new_res = models.SurveyResponse(
+        survey_id=res_in.survey_id,
+        email=clean_email,     # Simpan email yang sudah dibersihkan
+        answers=res_in.answers
+    )
+    db.add(new_res)
+    db.commit()
+    return {"status": "success", "message": "Terima kasih, jawaban Anda telah tersimpan."}
+
+# 3. GENERATE DATASET (Fitur Otomatisasi Bab IX)
+@router.post("/generate-dataset/{survey_id}")
+def generate_dataset(
+        survey_id: int, 
+        db: Session = Depends(get_db), 
+        current_user: models.User = Depends(deps.get_current_user)
+    ):
+    survey = db.query(models.Survey).filter(models.Survey.id == survey_id).first()
+    if not survey:
+        raise HTTPException(status_code=404, detail="Survey tidak ditemukan.")
+        
+    responses = db.query(models.SurveyResponse).filter(models.SurveyResponse.survey_id == survey_id).all()
+    if not responses:
+        raise HTTPException(status_code=400, detail="Belum ada responden untuk survey ini.")
+
+    # 1. Setup Source BRIDA
+    brida_source = db.query(models.Source).filter(models.Source.name == "BRIDA").first()
+    if not brida_source:
+        brida_source = models.Source(name="BRIDA", type="brida")
+        db.add(brida_source)
+        db.commit()
+        db.refresh(brida_source)
+
+    # 2. Kumpulkan Headers dengan Aman
+    question_map = {}
+    if survey.questions:
+        for q in survey.questions:
+            # Mengambil properti 'id' dan 'text' dari JSON questions
+            question_map[q.get("id")] = q.get("text")
+    
+    # Kumpulkan Headers yang sudah diterjemahkan
+    mapped_headers = set()
+    for res in responses:
+        if res.answers:
+            for key in res.answers.keys():
+                # Jika ID ada di map, pakai teks pertanyaan. Jika tidak ada, pakai ID aslinya.
+                header_text = question_map.get(key, key) 
+                mapped_headers.add(header_text)
+
+    # 3. Ekstrak Tahun dari Survey (Jika tidak ada, pakai tahun saat ini)
+    survey_year = survey.start_date.year if survey.start_date else datetime.utcnow().year
+
+    # 4. Buat Dataset dengan Metadata yang LENGKAP
+    new_dataset = models.Dataset(
+        title=f"Hasil Survey: {survey.title}",
+        description=survey.description,          # <-- Menarik deskripsi survey
+        dataset_type="pemerintah",            # <-- Penanda khusus untuk dataset survey
+        year=survey_year,                        # <-- Memasukkan tahun
+        source_id=brida_source.id,
+        headers=list(mapped_headers),
+        total_rows=len(responses),               # <-- Menyimpan jumlah responden langsung
+        status="approved",                      # <-- Asumsi langsung tayang di katalog
+        user_id=current_user.id                # (Diproteksi login admin)
+    )
+    db.add(new_dataset)
+    db.commit()
+    db.refresh(new_dataset)
+
+    # 5. Insert DataRow (beserta menghitung data sukses masuk)
+    inserted_rows = 0
+    for res in responses:
+        mapped_content = {}
+        
+        if res.answers:
+            for key, value in res.answers.items():
+                header_text = question_map.get(key, key)
+                mapped_content[header_text] = value
+        
+        row_json = json.dumps(mapped_content, sort_keys=True)
+        row_hash = hashlib.md5(row_json.encode()).hexdigest()
+        
+        new_row = models.DataRow(
+            dataset_id=new_dataset.id,
+            content=mapped_content,
+            row_hash=row_hash
+        )
+        db.add(new_row)
+        inserted_rows += 1
+    
+    # 6. Update last_ingest_stats (Bagus untuk audit sistem)
+    new_dataset.last_ingest_stats = {
+        "total_responses_processed": len(responses),
+        "successful_inserts": inserted_rows,
+        "generated_at": datetime.utcnow().isoformat()
+    }
+    
+    db.commit()
+    
+    return {
+        "status": "success", 
+        "dataset_id": new_dataset.id, 
+        "message": f"Dataset survey berhasil dibuat dengan {inserted_rows} baris data."
+    }
+
+# ==========================================
+# API UNTUK MENGAMBIL DATA SURVEY
+# ==========================================
+
+# 4. AMBIL STATS SURVEY (Untuk Dashboard)
+@router.get("/stats")
+def get_survey_stats(db: Session = Depends(get_db)):
+    """
+    Mengambil agregasi data statistik untuk dashboard Survey/BRIDA
+    """
+    # 1. Total Survey
+    total_surveys = db.query(models.Survey).count()
+    
+    # 2. Survey Aktif 
+    # Menerapkan filter status aktif (logic dari branch main)
+    active_surveys = db.query(models.Survey).filter(models.Survey.status == "active").count()
+    
+    # 3. Total Responden dari seluruh survey
+    total_responses = db.query(models.SurveyResponse).count()
+    
+    # 4. Dataset Terbentuk dari hasil konversi Survey (Source BRIDA)
+    # Menerapkan relasi aman via source_id (logic dari branch HEAD/r)
+    brida_source = db.query(models.Source).filter(models.Source.name == "BRIDA").first()
+    datasets_count = 0
+    if brida_source:
+        datasets_count = db.query(models.Dataset).filter(models.Dataset.source_id == brida_source.id).count()
+
+    return {
+        "total": total_surveys,
+        "active": active_surveys,
+        "responses": total_responses,
+        "datasets": datasets_count
+    }
+
+# 5. AMBIL SEMUA DAFTAR SURVEY (Untuk halaman Daftar Survey di Dashboard)
+@router.get("/list")
+def get_all_surveys(db: Session = Depends(get_db)):
+    surveys = db.query(models.Survey).order_by(models.Survey.created_at.desc()).all()
+    return surveys
+
+# 6. AMBIL DETAIL SATU SURVEY BESERTA JAWABANNYA
+@router.get("/{survey_id}")
+def get_survey_detail(survey_id: int, db: Session = Depends(get_db)):
+    survey = db.query(models.Survey).filter(models.Survey.id == survey_id).first()
+    
+    if not survey:
+        raise HTTPException(status_code=404, detail="Survey tidak ditemukan.")
+    
+    # Ambil jumlah total responden untuk survey ini
+    responses_count = db.query(models.SurveyResponse).filter(models.SurveyResponse.survey_id == survey_id).count()
+    
+    # Ambil data responses
+    responses = db.query(models.SurveyResponse).filter(models.SurveyResponse.survey_id == survey_id).all()
+
+    return {
+        "survey": survey,
+        "total_responses": responses_count,
+        "responses": responses
+    }
+
+# 7. EXPORT SATU SURVEY
+@router.get("/export/{survey_id}")
+def export_survey_results(
+    survey_id: int,
+    format: str = Query("xlsx", enum=["xlsx", "csv"]),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(deps.get_current_user)
+):
+    # 1. Ambil data survey untuk mendapatkan teks pertanyaan (headers)
+    survey = db.query(models.Survey).filter(models.Survey.id == survey_id).first()
+    if not survey:
+        raise HTTPException(status_code=404, detail="Survey tidak ditemukan")
+
+    # 2. Ambil semua jawaban responden
+    responses = db.query(models.SurveyResponse).filter(
+        models.SurveyResponse.survey_id == survey_id
+    ).all()
+
+    if not responses:
+        raise HTTPException(status_code=400, detail="Belum ada data responden untuk diexport")
+
+    # 3. Buat Mapping ID Pertanyaan -> Teks Pertanyaan
+    question_map = {q.get("id"): q.get("text") for q in survey.questions} if survey.questions else {}
+
+    # 4. Susun data untuk Pandas
+    export_data = []
+    for res in responses:
+        # Tambahkan metadata dasar
+        row = {
+            "Email Responden": res.email if res.email else "Anonim",
+            "Waktu Submit": res.submitted_at.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+        # Mapping jawaban berdasarkan teks pertanyaan
+        for q_id, answer in res.answers.items():
+            header_name = question_map.get(q_id, q_id)
+            # Jika jawaban berupa list (checkbox), gabungkan dengan koma agar rapi di Excel
+            if isinstance(answer, list):
+                row[header_name] = ", ".join(map(str, answer))
+            else:
+                row[header_name] = answer
+        
+        export_data.append(row)
+
+    # 5. Konversi ke DataFrame Pandas
+    df = pd.DataFrame(export_data)
+
+    # 6. Proses pembuatan file di memori (Buffer)
+    output = io.BytesIO()
+    
+    if format == "xlsx":
+        # Export ke Excel
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Hasil Survey')
+        content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = f"Hasil_Survey_{survey_id}.xlsx"
+    else:
+        # Export ke CSV
+        csv_str = df.to_csv(index=False, encoding='utf-8')
+        output.write(csv_str.encode('utf-8'))
+        content_type = "text/csv"
+        filename = f"Hasil_Survey_{survey_id}.csv"
+
+    output.seek(0)
+
+    # 7. Kembalikan sebagai file unduhan
+    return StreamingResponse(
+        output,
+        media_type=content_type,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+--- FILE: app\api\endpoints\categories.py ---
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+from typing import List
+import shutil
+import os
+import uuid
+
+router = APIRouter()
+
+UPLOAD_DIR = "static/categories"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+@router.post("/", response_model=schemas.CategoryOut)
+async def create_category(
+    name: str = Form(...), 
+    image: UploadFile = File(None), 
+    db: Session = Depends(get_db)
+):
+    # 1. Cek apakah kategori sudah ada
+    existing = db.query(models.Category).filter(models.Category.name == name).first()
+    if existing:
+        return existing
+
+    # 2. Proses Upload Gambar jika ada
+    image_path = None
+    if image:
+        # Buat nama file unik untuk menghindari bentrok nama
+        file_extension = image.filename.split(".")[-1]
+        file_name = f"{uuid.uuid4()}.{file_extension}"
+        image_path = f"{UPLOAD_DIR}/{file_name}"
+        
+        with open(image_path, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+
+    # 3. Simpan ke Database
+    new_cat = models.Category(
+        name=name,
+        image_url=image_path # Simpan path gambar
+    )
+    db.add(new_cat)
+    db.commit()
+    db.refresh(new_cat)
+    return new_cat
+
+@router.get("/", response_model=List[schemas.CategoryOut])
+def list_categories(db: Session = Depends(get_db)):
+    return db.query(models.Category).all()
+
+--- FILE: app\api\endpoints\dashboard.py ---
+from fastapi import APIRouter, Depends
+from sqlalchemy import func, extract, over
+from datetime import datetime
+from app.db.session import get_db
+from sqlalchemy.orm import Session, aliased
+from app.models import models
+from app.schemas import schemas
+from typing import List, Dict
+
+router = APIRouter()
+
+@router.get("/main-stats")
+def get_dashboard_main_stats(db: Session = Depends(get_db)):
+    # 1. Kartu Statistik
+    total_datasets = db.query(models.Dataset).filter(models.Dataset.status == "approved").count()
+    total_sources = db.query(models.Source).count()
+    active_users = db.query(models.User).filter(models.User.is_active == True).count()
+    avg_quality = db.query(func.avg(models.Dataset.quality_score)).filter(models.Dataset.status == "approved").scalar() or 0
+
+    # 2. Dataset Terbaru (5 terakhir)
+    recent_datasets = db.query(models.Dataset).filter(models.Dataset.status == "approved")\
+                        .order_by(models.Dataset.created_at.desc()).limit(5).all()
+
+    # 3. Dataset Populer (Berdasarkan view_count terbanyak)
+    popular_datasets = db.query(models.Dataset).filter(models.Dataset.status == "approved")\
+                         .order_by(models.Dataset.view_count.desc()).limit(5).all()
+
+    # 4. Tren Quality Score Per Bulan
+    trend_query = db.query(
+        extract('month', models.Dataset.created_at).label('month'),
+        func.avg(models.Dataset.quality_score).label('avg_score')
+    ).filter(models.Dataset.status == "approved")\
+     .group_by('month').order_by('month').all()
+    
+    quality_trend = [{"bulan": int(t.month), "skor": round(float(t.avg_score), 2)} for t in trend_query]
+
+    # 5. PERBAIKAN: Status Kirim OPD berdasarkan USER bulan ini (Target 12 per bulan)
+    current_month = datetime.now().month
+    current_year = datetime.now().year
+    
+    opd_status = []
+    # Ambil semua user dengan role 'user' (Operator OPD)
+    users_opd = db.query(models.User).filter(models.User.role == "user").all()
+    
+    for u in users_opd:
+        # Hitung upload berdasarkan user_id
+        upload_count = db.query(models.Dataset).filter(
+            models.Dataset.user_id == u.id,
+            extract('month', models.Dataset.created_at) == current_month,
+            extract('year', models.Dataset.created_at) == current_year
+        ).count()
+        
+        target = 12
+        # Hitung persentase kepatuhan
+        persentase = round((upload_count / target) * 100, 2)
+        if persentase > 100: persentase = 100 # Maksimal 100%
+        
+        opd_status.append({
+            "opd_name": u.full_name, # Sekarang mengambil dari full_name di tabel User
+            "username": u.username,
+            "terkirim": upload_count,
+            "target": target,
+            "persentase": f"{persentase}%",
+            "status": "Lengkap" if upload_count >= target else "Belum Lengkap"
+        })
+
+    return {
+        "cards": {
+            "total_dataset": total_datasets,
+            "total_sumber": total_sources,
+            "user_aktif": active_users,
+            "rata_rata_kualitas": f"{round(float(avg_quality), 2)}%"
+        },
+        "recent": recent_datasets,
+        "popular": popular_datasets,
+        "quality_trend": quality_trend,
+        "opd_monthly_monitoring": opd_status
+    }
+
+@router.get("/latest-by-category")
+def get_latest_datasets_per_category(db: Session = Depends(get_db)):
+    """
+    Mengambil maksimal 5 dataset terbaru untuk SETIAP kategori.
+    Termasuk informasi Source, Source Type, Description, Year, dan Dataset Type.
+    """
+    
+    # 1. Buat Subquery dengan Window Function (ROW_NUMBER)
+    # Kita mengelompokkan (partition) berdasarkan category_id 
+    # dan mengurutkan berdasarkan tanggal terbaru.
+    subquery = db.query(
+        models.Dataset,
+        func.row_number().over(
+            partition_by=models.Dataset.category_id,
+            order_by=models.Dataset.created_at.desc()
+        ).label("rn")
+    ).filter(models.Dataset.status == "approved").subquery()
+
+    # 2. Gunakan aliased untuk memetakan subquery kembali ke Model Dataset
+    dataset_alias = aliased(models.Dataset, subquery)
+
+    # 3. Eksekusi query: Ambil urutan 1 sampai 5 per kategori
+    # Kita batasi rn <= 5 sesuai permintaan awal Anda
+    results = db.query(dataset_alias).filter(
+        subquery.c.rn <= 1
+    ).all()
+
+    # 4. Kelompokkan data agar Frontend mudah memakainya
+    grouped_data = {}
+    
+    for ds in results:
+        # Ambil data kategori
+        cat_name = ds.category.name if ds.category else "Umum"
+        template = ds.category.template_url if ds.category else None
+        
+        # Inisialisasi grup kategori jika belum ada
+        if cat_name not in grouped_data:
+            grouped_data[cat_name] = {
+                "category_info": {
+                    "name": cat_name,
+                    "template_url": template
+                },
+                "datasets": []
+            }
+            
+        # 5. Tambahkan dataset dengan informasi lengkap
+        grouped_data[cat_name]["datasets"].append({
+            "id": ds.id,
+            "title": ds.title,
+            "description": ds.description,
+            "year": ds.year,
+            "dataset_type": ds.dataset_type, # 'pemerintah' / 'non-pemerintah'
+            "image_url": ds.image_url,
+            "created_at": ds.created_at,
+            # Data dari relasi Source (owner)
+            "source_id": ds.source_id,
+            "source_name": ds.owner.name if ds.owner else "Unknown",
+            "source_type": ds.category.name if ds.category else "Unknown", # Misalnya: 'opd', 'bps', dll
+        })
+
+    return grouped_data
+
+--- FILE: app\api\endpoints\data_ingest.py ---
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+from sqlalchemy.orm import Session
+from typing import Optional
+import json
+import hashlib
+import os
+import shutil
+from pathlib import Path
+from datetime import datetime
+
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+from app.services.cleaning_engine import CleaningEngine
+from app.api.deps import get_current_user
+from app.core.cloudinary_config import upload_image_to_cloudinary
+
+router = APIRouter()
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+@router.post("/upload-process", response_model=schemas.UploadResponse)
+async def upload_and_process_form(
+    title: str = Form(...),
+    dataset_type: str = Form(...),
+    source_id: int = Form(...),
+    category_id: int = Form(...),
+    source_type_id: int = Form(...),
+    year: int = Form(...),
+    period: str = Form(...),
+    description: str = Form(None),
+    district_id: Optional[int] = Form(None),
+    file: UploadFile = File(...),
+    image: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    # --- 1. INISIALISASI VARIABEL AWAL (Agar tidak UnboundLocalError) ---
+    headers = []
+    total_inserted = 0
+    total_duplicates = 0
+    empty_rows_count = 0
+    empty_cells_count = 0
+    overall_q_score = 0.0
+    first_dataset_id = 0
+    structure_type = "tabular" # default
+
+    # 2. Validasi Kategori
+    # --- 1. INISIALISASI VARIABEL AWAL (Agar tidak UnboundLocalError) ---
+    headers = []
+    total_inserted = 0
+    total_duplicates = 0
+    empty_rows_count = 0
+    empty_cells_count = 0
+    overall_q_score = 0.0
+    first_dataset_id = 0
+    structure_type = "tabular" # default
+
+    # 2. Validasi Kategori
+    category = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not category:
+        raise HTTPException(status_code=400, detail="Kategori tidak ditemukan")
+
+    # 3. Upload Gambar Cover ke Cloudinary
+    # 3. Upload Gambar Cover ke Cloudinary
+    try:
+        image_bytes = await image.read()
+        photo_url, _ = upload_image_to_cloudinary(
+            image_bytes, 
+            folder_name="mimika_datahub/user_uploads"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal upload gambar: {str(e)}")
+
+    initial_status = "approved" if current_user.role == "admin" else "pending"
+    filename = file.filename.lower()
+    is_tabular = filename.endswith(('.xlsx', '.xls', '.csv'))
+    is_document = filename.endswith(('.pdf', '.doc', '.docx'))
+
+    if not is_tabular and not is_document:
+        raise HTTPException(status_code=400, detail="Format file tidak didukung.")
+
+    initial_status = "approved" if current_user.role == "admin" else "pending"
+    filename = file.filename.lower()
+    is_tabular = filename.endswith(('.xlsx', '.xls', '.csv'))
+    is_document = filename.endswith(('.pdf', '.doc', '.docx'))
+
+    if not is_tabular and not is_document:
+        raise HTTPException(status_code=400, detail="Format file tidak didukung.")
+
+    contents = await file.read()
+
+    # --- 4. LOGIKA PERCABANGAN FILE ---
+
+    if is_tabular:
+        try:
+            # A. Jalankan Cleaning Engine
+            clean_result = CleaningEngine.clean_and_align(contents, filename=file.filename)
+            
+            headers = clean_result["headers"]
+            cleaned_records = clean_result["records"]
+            empty_rows_count = clean_result["empty_rows"]
+            empty_cells_count = clean_result["empty_cells"]
+            structure_type = clean_result.get("structure_type", "structured")
+
+            # B. INTERVENSI GIS: GROUPING & ROW MELTING
+            district_map = {d.name.lower().strip(): d.id for d in db.query(models.District).all()}
+            grouped_records = {}
+
+            for rec in cleaned_records:
+                content = rec["content"]
+                
+                target_district_id = district_id # Default ke input form jika ada
+                mapped_name = content.pop("_spatial_mapping", None)
+                
+                if mapped_name:
+                    # Jika engine menemukan kolom spesifik (misal kolom 'district')
+                    target_district_id = district_map.get(mapped_name.lower().strip(), target_district_id)
+                else:
+                    # Jika tidak ada kolom spesifik, scan SEMUA isi cell di baris ini
+                    if target_district_id is None:
+                        for cell_value in content.values():
+                            if isinstance(cell_value, str):
+                                val_clean = cell_value.lower().strip()
+                                if val_clean in district_map:
+                                    target_district_id = district_map[val_clean]
+                                    break
+
+                is_unmapped = (target_district_id is None)
+                group_key = (target_district_id, is_unmapped)
+                if group_key not in grouped_records:
+                    grouped_records[group_key] = []
+                
+                # Simpan record ke grupnya
+                rec["content"] = content 
+                grouped_records[group_key].append(rec)
+
+            # C. Loop Pemecahan Dataset (Multi-Spatial)
+            for (d_id, is_unmapped), records in grouped_records.items():
+                existing_hashes = set()
+                unique_records = []
+                
+                for r in records:
+                    if r["row_hash"] not in existing_hashes:
+                        unique_records.append(r)
+                        existing_hashes.add(r["row_hash"])
+                    else:
+                        total_duplicates += 1
+                        
+                if not unique_records:
+                    continue
+                    
+                new_dataset = models.Dataset(
+                    title=title,
+                    dataset_type=dataset_type,
+                    source_id=source_id,
+                    category_id=category_id,
+                    source_type_id=source_type_id,
+                    district_id=d_id, 
+                    year=year,
+                    period=period,
+                    description=description,
+                    status=initial_status,
+                    user_id=current_user.id,
+                    image_url=photo_url,
+                    headers=headers,
+                    structure_type=structure_type,
+                    spatial_status="unmapped" if is_unmapped else "mapped",
+                    needs_review=True if is_unmapped else False
+                )
+                db.add(new_dataset)
+                db.flush() 
+                
+                if first_dataset_id == 0:
+                    first_dataset_id = new_dataset.id
+                    
+                rows_to_insert = [
+                    models.DataRow(
+                        dataset_id=new_dataset.id, 
+                        content=r["content"], 
+                        row_hash=r["row_hash"]
+                    ) for r in unique_records
+                ]
+                db.bulk_save_objects(rows_to_insert)
+                
+                # Statistik Per Dataset
+                inserted = len(rows_to_insert)
+                total_inserted += inserted
+                
+                if structure_type == "semi_structured":
+                    total_potential_cells = len(records) * 3
+                else:
+                    total_potential_cells = len(records) * len(headers)
+                
+                group_empty_cells = (len(records) / len(cleaned_records)) * empty_cells_count
+                
+                if total_potential_cells > 0:
+                    filled_cells = total_potential_cells - group_empty_cells
+                    q_score_local = (filled_cells / total_potential_cells) * 100
+                else:
+                    q_score_local = 100.0
+                
+                group_empty_rows = empty_rows_count if first_dataset_id == new_dataset.id else 0
+                group_total_rows = inserted + (len(records) - inserted) + group_empty_rows
+                
+                new_dataset.total_rows = group_total_rows
+                new_dataset.quality_score = round(q_score_local, 2)
+                new_dataset.last_ingest_stats = {
+                    "inserted": inserted,
+                    "duplicates": len(records) - inserted,
+                    "empty_rows": group_empty_rows,
+                    "empty_cells": round(group_empty_cells),
+                    "total_rows": group_total_rows,
+                    "fill_rate": f"{round(q_score_local, 2)}%" 
+                }
+            
+            db.commit()
+
+            # Kalkulasi skor kualitas rata-rata total untuk return
+            total_potential = len(cleaned_records) * (3 if structure_type == "semi_structured" else len(headers))
+            overall_q_score = ((total_potential - empty_cells_count) / total_potential * 100) if total_potential > 0 else 100.0
+
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Gagal memproses data tabular: {str(e)}")
+
+    elif is_document:
+        try:
+            # 1. Tentukan nama file unik
+            file_extension = os.path.splitext(file.filename)[1]
+            unique_filename = f"{hashlib.md5(contents).hexdigest()}{file_extension}"
+            
+            # 2. Tentukan path tujuan
+            doc_folder = UPLOAD_DIR / "documents"
+            doc_folder.mkdir(exist_ok=True)
+            file_path = doc_folder / unique_filename
+            
+            # 3. Simpan file biner secara lokal
+            with open(file_path, "wb") as buffer:
+                buffer.write(contents)
+            
+            # 4. Buat URL akses (Ganti domain_vps.com dengan IP/Domain Anda)
+            base_url = "http://127.0.0.1:8000" # Sesuaikan dengan domain backend
+            file_url = f"{base_url}/uploads/documents/{unique_filename}"
+            
+            new_dataset = models.Dataset(
+                title=title,
+                dataset_type=dataset_type,
+                source_id=source_id,
+                category_id=category_id,
+                source_type_id=source_type_id,
+                district_id=district_id, # [cite: 1]
+                year=year,
+                period=period,
+                description=description,
+                status=initial_status,
+                user_id=current_user.id,
+                image_url=photo_url, # Cover tetap bisa di Cloudinary atau lokal
+                file_url=file_url,
+                headers=["Dokumen"],
+                structure_type="document", # [cite: 3]
+                total_rows=1,
+                quality_score=100.0,
+                spatial_status="mapped" if district_id else "unmapped" # [cite: 2]
+            )
+            db.add(new_dataset)
+            db.commit()
+            db.refresh(new_dataset)
+
+            # Set variabel untuk return response
+            first_dataset_id = new_dataset.id
+            headers = ["Dokumen"]
+            total_inserted = 1
+            overall_q_score = 100.0
+            structure_type = "document"
+
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Gagal upload dokumen: {str(e)}")
+
+    # 5. Return Agregasi ke Frontend
+    return {
+        "status": "success",
+        "dataset_id": first_dataset_id,
+        "dataset_id": first_dataset_id,
+        "headers_found": headers,
+        "message": f"File {filename} berhasil diproses sebagai {structure_type}",
+        "message": f"File {filename} berhasil diproses sebagai {structure_type}",
+        "stats": {
+            "inserted": total_inserted,
+            "duplicates": total_duplicates,
+            "empty_rows": empty_rows_count,
+            "empty_cells": empty_cells_count,
+            "total": total_inserted + total_duplicates + empty_rows_count,
+            "quality_score": round(overall_q_score, 2)
+        }
+    }
+
+--- FILE: app\api\endpoints\data_view.py ---
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+from typing import List, Optional
+from fastapi.responses import StreamingResponse
+from app.services.export_engine import ExportEngine
+from app.api import deps
+from sqlalchemy import or_
+
+import csv
+import io
+
+router = APIRouter()
+
+@router.get("/content/{dataset_id}")
+def get_dataset_content(
+    dataset_id: int, 
+    limit: int = 100, 
+    db: Session = Depends(get_db)
+):
+    """
+    Mengambil isi data berdasarkan tipe struktur (Tabular vs Document).
+    """
+    # 1. Ambil metadata dataset
+    dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset tidak ditemukan")
+
+    # 2. Update view count
+    dataset.view_count += 1
+    db.commit()
+
+    # 3. Logika Percabangan Response berdasarkan Structure Type
+    
+    # --- A. JIKA FORMAT DOKUMEN (PDF/WORD) ---
+    if dataset.structure_type == "document":
+        file_url = dataset.file_url
+        view_url = file_url  # Default untuk PDF
+        
+        if file_url and file_url.lower().endswith('.pdf'):
+            if "upload/" in file_url:
+                view_url = file_url.replace("upload/", "upload/fl_inline/")
+                
+        # Logika untuk Word tetap sama menggunakan Office Viewer 
+        elif file_url and any(file_url.lower().endswith(ext) for ext in ['.doc', '.docx']):
+            view_url = f"https://view.officeapps.live.com/op/view.aspx?src={file_url}"
+
+        return {
+            "title": dataset.title,
+            "dataset_type": dataset.dataset_type,
+            "structure_type": "document",
+            "file_url": file_url,  # URL asli untuk download
+            "view_url": view_url,  # URL khusus untuk ditampilkan di Iframe/Previewer
+            "description": dataset.description,
+            "headers": dataset.headers,
+            "rows": [] 
+        }
+
+    # --- B. JIKA FORMAT TABULAR (EXCEL/CSV/SURVEY) ---
+    else:
+        rows = db.query(models.DataRow).filter(
+            models.DataRow.dataset_id == dataset_id
+        ).limit(limit).all()
+        
+        return {
+            "title": dataset.title,
+            "dataset_type": dataset.dataset_type,
+            "structure_type": "tabular",
+            "headers": dataset.headers,
+            "rows": [r.content for r in rows],
+            "total_rows_preview": len(rows),
+            "total_rows_actual": dataset.total_rows,
+            "file_url": None,
+            "view_url": None
+        }
+
+@router.get("/export/{dataset_id}")
+def export_dataset(dataset_id: int, db: Session = Depends(get_db)):
+    rows = db.query(models.DataRow).filter(models.DataRow.dataset_id == dataset_id).all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="Tidak ada data untuk di-export")
+    
+    clean_data = [r.content for r in rows]
+    file_obj = ExportEngine.to_excel(clean_data, f"export_{dataset_id}")
+    
+    return StreamingResponse(
+        file_obj,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=mimika_data_clean_{dataset_id}.xlsx"}
+    )
+
+@router.get("/my-datasets", response_model=List[schemas.DatasetOut])
+def get_my_datasets(
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(deps.get_current_user)
+):
+    """Mengambil dataset yang diupload oleh user yang sedang login"""
+    return db.query(models.Dataset).filter(models.Dataset.user_id == current_user.id).all()
+
+@router.get("/export-list")
+def export_dataset_list(
+    dataset_type: str, # 'pemerintah' atau 'non-pemerintah'
+    file_format: str = "excel", # 'excel' atau 'csv'
+    db: Session = Depends(get_db)
+):
+    datasets = db.query(models.Dataset).filter(
+        models.Dataset.dataset_type == dataset_type,
+        models.Dataset.status == "approved"
+    ).all()
+    
+    # Format data untuk excel
+    data_to_export = []
+    for d in datasets:
+        data_to_export.append({
+            "ID": d.id,
+            "Judul Dataset": d.title,
+            "Tahun": d.year,
+            "Periode": d.period,
+            "Total Baris": d.total_rows,
+            "Skor Kualitas": f"{d.quality_score}%",
+            "Uploader ID": d.user_id,
+            "Tanggal Dibuat": d.created_at.strftime("%Y-%m-%d")
+        })
+
+    if file_format == "csv":
+        csv_data = ExportEngine.list_to_csv(data_to_export)
+        return StreamingResponse(io.BytesIO(csv_data), media_type="text/csv", 
+                                headers={"Content-Disposition": f"attachment; filename=list_{dataset_type}.csv"})
+    
+    excel_file = ExportEngine.list_to_excel(data_to_export, "Datasets")
+    return StreamingResponse(excel_file, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            headers={"Content-Disposition": f"attachment; filename=list_{dataset_type}.xlsx"})
+
+@router.get("/export-monitoring-csv")
+def export_monitoring_csv(db: Session = Depends(get_db), admin: models.User = Depends(deps.get_admin_user)):
+    # Re-use logika dari summary (atau panggil fungsi internal)
+    # Untuk singkatnya, kita ambil data user role 'user'
+    users_opd = db.query(models.User).filter(models.User.role == "user").all()
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Nama OPD", "Email", "Progress", "Status", "Rerata Kualitas"])
+
+    now = datetime.now()
+    for u in users_opd:
+        count = db.query(models.Dataset).filter(
+            models.Dataset.user_id == u.id,
+            extract('month', models.Dataset.created_at) == now.month,
+            extract('year', models.Dataset.created_at) == now.year,
+            models.Dataset.status == "approved"
+        ).count()
+        
+        status = "Lengkap" if count >= 12 else "Kurang" if count > 0 else "Belum Kirim"
+        avg_q = db.query(func.avg(models.Dataset.quality_score)).filter(models.Dataset.user_id == u.id).scalar() or 0
+        
+        writer.writerow([u.full_name, u.email, f"{count}/12", status, f"{round(float(avg_q), 2)}%"])
+
+    output.seek(0)
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode()),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=monitoring_opd.csv"}
+    )
+
+@router.get("/search-suggestions")
+def get_search_suggestions(
+    q: str = Query(..., min_length=1), 
+    db: Session = Depends(get_db)
+):
+    """
+    Fitur pencarian untuk landing page:
+    1. Mencari kategori yang namanya mirip 'q'
+    2. Mencari dataset yang judulnya mirip 'q'
+    """
+    # Mencari kategori yang relevan
+    categories = db.query(models.Category).filter(
+        models.Category.name.ilike(f"%{q}%")
+    ).limit(5).all()
+
+    # Mencari dataset yang relevan (hanya yang sudah approved)
+    datasets = db.query(models.Dataset).filter(
+        models.Dataset.status == "approved",
+        or_(
+            models.Dataset.title.ilike(f"%{q}%"),
+            models.Dataset.description.ilike(f"%{q}%")
+        )
+    ).limit(10).all()
+
+    return {
+        "suggestions": {
+            "categories": [{"id": c.id, "name": c.name} for c in categories],
+            "datasets": [
+                {
+                    "id": d.id, 
+                    "title": d.title, 
+                    "category_id": d.category_id,
+                    "dataset_type": d.dataset_type
+                } for d in datasets
+            ]
+        }
+    }
+
+@router.get("/search-by-category")
+def search_by_category(
+    category_id: int, 
+    q: Optional[str] = None, 
+    db: Session = Depends(get_db)
+):
+    """
+    Mencari dataset spesifik di dalam satu kategori
+    """
+    query = db.query(models.Dataset).filter(
+        models.Dataset.category_id == category_id,
+        models.Dataset.status == "approved"
+    ) 
+
+    if q:
+        query = query.filter(models.Dataset.title.ilike(f"%{q}%"))
+
+    results = query.all()
+    return results 
+
+--- FILE: app\api\endpoints\datasets.py ---
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+from typing import List
+from app.api.deps import get_admin_user
+from sqlalchemy import func, String
+
+router = APIRouter()
+
+# Mengambil daftar semua Dataset
+@router.get("/", response_model=List[schemas.DatasetOut])
+def list_datasets(db: Session = Depends(get_db)):
+    return db.query(models.Dataset).all()
+
+@router.patch("/{dataset_id}/approve")
+def approve_dataset(
+    dataset_id: int, 
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(get_admin_user) # Hanya admin yang bisa lewat
+):
+    dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+    
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset tidak ditemukan")
+    
+    dataset.status = "approved"
+    db.commit()
+    
+    return {"message": f"Dataset '{dataset.title}' berhasil disetujui (Approved)"}
+
+# Endpoint Admin untuk melihat dataset yang masih pending
+@router.get("/pending-list")
+def get_pending_datasets(
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(get_admin_user)
+):
+    return db.query(models.Dataset).filter(models.Dataset.status == "pending").all()
+
+# Endpoint Admin untuk melihat dataset approved
+@router.get("/approved-list")
+def get_approved_datasets(
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(get_admin_user)
+):
+    return db.query(models.Dataset).filter(models.Dataset.status == "approved").all()
+
+@router.get("/pemerintah", response_model=List[schemas.DatasetOut])
+def get_datasets_pemerintah(
+    category_id: int = None,
+    source_id: int = None,
+    source_type_id: int = None,
+    year: int = None,
+    db: Session = Depends(get_db)
+    ):
+    query = db.query(models.Dataset).filter(
+        models.Dataset.dataset_type == "pemerintah",
+        models.Dataset.status == "approved"
+    )
+    
+    # Logic Filtering
+    if category_id:
+        query = query.filter(models.Dataset.category_id == category_id)
+    if source_id:
+        query = query.filter(models.Dataset.source_id == source_id)
+    if source_type_id:
+        query = query.filter(models.Dataset.source_type_id == source_type_id)
+    if year: # Tambahkan logika filtering year
+        query = query.filter(models.Dataset.year == year)
+        
+    return query.all()
+
+@router.get("/non-pemerintah", response_model=List[schemas.DatasetOut])
+def get_datasets_non_pemerintah(
+    category_id: int = None,
+    source_id: int = None,
+    source_type_id: int = None,
+    year: int = None,
+    db: Session = Depends(get_db)
+    ):
+    query = db.query(models.Dataset).filter(
+        models.Dataset.dataset_type == "non-pemerintah",
+        models.Dataset.status == "approved"
+    )
+    
+    # Logic Filtering
+    if category_id:
+        query = query.filter(models.Dataset.category_id == category_id)
+    if source_id:
+        query = query.filter(models.Dataset.source_id == source_id)
+    if source_type_id:
+        query = query.filter(models.Dataset.source_type_id == source_type_id)
+    if year: # Tambahkan logika filtering year
+        query = query.filter(models.Dataset.year == year)
+        
+    return query.all()
+
+@router.get("/sidebar-stats", response_model=schemas.SidebarStats)
+def get_sidebar_stats(dataset_type: str = "pemerintah", db: Session = Depends(get_db)):
+    """
+    Mengambil daftar filter beserta jumlah dataset yang terkait 
+    berdasarkan dataset_type (pemerintah/non-pemerintah)
+    """
+    
+    # 1. Hitung berdasarkan Kategori
+    categories = db.query(
+        models.Category.id,
+        models.Category.name,
+        func.count(models.Dataset.id).label("count")
+    ).join(models.Dataset, models.Dataset.category_id == models.Category.id)\
+     .filter(models.Dataset.dataset_type == dataset_type, models.Dataset.status == "approved")\
+     .group_by(models.Category.id).all()
+
+    # 2. Hitung berdasarkan Source (OPD)
+    sources = db.query(
+        models.Source.id,
+        models.Source.name,
+        func.count(models.Dataset.id).label("count")
+    ).join(models.Dataset, models.Dataset.source_id == models.Source.id)\
+     .filter(models.Dataset.dataset_type == dataset_type, models.Dataset.status == "approved")\
+     .group_by(models.Source.id).all()
+
+    # 3. Hitung berdasarkan Source Type (Internal/Eksternal)
+    source_types = db.query(
+        models.SourceType.id,
+        models.SourceType.name,
+        func.count(models.Dataset.id).label("count")
+    ).join(models.Dataset, models.Dataset.source_type_id == models.SourceType.id)\
+     .filter(models.Dataset.dataset_type == dataset_type, models.Dataset.status == "approved")\
+     .group_by(models.SourceType.id).all()
+    
+    years = db.query(
+        models.Dataset.year.label("id"), # Menggunakan value tahun sebagai ID
+        models.Dataset.year.cast(String).label("name"), # Mengconvert tahun ke string untuk Nama
+        func.count(models.Dataset.id).label("count")
+    ).filter(
+        models.Dataset.dataset_type == dataset_type, 
+        models.Dataset.status == "approved"
+    ).group_by(models.Dataset.year)\
+     .order_by(models.Dataset.year.desc()).all()
+
+    return {
+        "categories": categories,
+        "sources": sources,
+        "source_types": source_types,
+        "years": years
+    }
+
+--- FILE: app\api\endpoints\gis.py ---
+from fastapi import APIRouter, Depends, Query, HTTPException
+from sqlalchemy.orm import Session
+from typing import List, Optional, Dict, Any
+
+from app.db.session import get_db
+from app.schemas import schemas
+from app.models import models
+from app.services.spatial_service import SpatialService
+from app.api.deps import get_current_user
+
+router = APIRouter()
+
+@router.get("/stats", response_model=List[schemas.SpatialStatResponse])
+def get_gis_statistics(
+    category_id: Optional[int] = Query(None, description="Filter berdasarkan ID Kategori untuk pemetaan sektoral"),
+    year: Optional[int] = Query(None, description="Filter berdasarkan Tahun rilis dataset"),
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint agregasi spasial (GIS).
+    Mengembalikan array dictionary dengan kompleksitas O(1) untuk rendering peta GeoJSON di frontend.
+    Telah diarsiteki dengan Left Outer Join untuk menjamin 18 Distrik selalu dirender.
+    """
+    # Mendelegasikan logika kalkulasi murni ke layer Service (Pure Fabrication)
+    return SpatialService.get_district_stats(db=db, category_id=category_id, year=year)
+
+@router.get("/stats/detail", response_model=Dict[str, Any])
+def get_detailed_gis_statistics(
+    category_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint ekspansi spasial.
+    Mengembalikan data multivariabel (jumlah row, rata-rata kualitas) untuk kebutuhan Tooltip Interaktif di peta.
+    """
+    return SpatialService.get_detailed_district_stats(db=db, category_id=category_id)
+
+@router.get("/district/{district_id}/drilldown", response_model=Dict[str, Any])
+def get_district_drilldown(
+    district_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint Drill-Down Spasial (Pop-up Peta).
+    Menyajikan narasi statis profil distrik dipadukan dengan agregasi kepadatan dataset per kategori.
+    """
+    drilldown_data = SpatialService.get_district_drilldown_stats(db=db, district_id=district_id)
+    
+    if not drilldown_data:
+        raise HTTPException(status_code=404, detail="Data Distrik tidak ditemukan di database.")
+        
+    return drilldown_data
+
+# ==========================================
+# FASE 1: ENDPOINT MANAJEMEN PROFIL WILAYAH
+# ==========================================
+
+@router.get("/districts", response_model=List[schemas.DistrictOut])
+def get_all_districts(
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint untuk mendapatkan daftar seluruh distrik beserta profil statisnya.
+    Digunakan oleh Admin untuk menginisialisasi tabel Manajemen Wilayah.
+    """
+    # Menarik daftar distrik diurutkan berdasarkan ID master Bappeda
+    districts = db.query(models.District).order_by(models.District.id.asc()).all()
+    return districts
+
+@router.put("/district/{district_id}/profile", response_model=schemas.DistrictProfileOut)
+def update_district_profile(
+    district_id: int,
+    payload: schemas.DistrictProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Endpoint untuk Upsert (Update/Insert) Profil Wilayah.
+    Hanya dapat dieksekusi oleh Administrator sistem.
+    """
+    # 1. Otorisasi Ketat
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=403, 
+            detail="Akses Ditolak: Hanya Administrator yang diizinkan mengubah profil kewilayahan."
+        )
+        
+    # 2. Eksekusi Service
+    try:
+        # exclude_unset=True memastikan bahwa kita hanya meng-update kolom yang benar-benar dikirim dari Frontend.
+        profile = SpatialService.update_district_profile(
+            db=db, 
+            district_id=district_id, 
+            payload=payload.dict(exclude_unset=True) 
+        )
+        return profile
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Terjadi kegagalan sistem saat memproses profil: {str(e)}")
+
+--- FILE: app\api\endpoints\monitoring.py ---
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import func, extract
+from datetime import datetime, timedelta
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+from app.api import deps
+from typing import List
+
+router = APIRouter()
+
+@router.get("/opd-summary", response_model=schemas.MonitoringSummaryResponse)
+def get_opd_monitoring(db: Session = Depends(get_db), admin: models.User = Depends(deps.get_admin_user)):
+    now = datetime.now()
+    current_month = now.month
+    current_year = now.year
+
+    # 1. Ambil semua User dengan role 'user'
+    users_opd = db.query(models.User).filter(models.User.role == "user").all()
+    total_opd = len(users_opd)
+    
+    lengkap_count = 0
+    kurang_count = 0
+    belum_kirim_count = 0
+    table_data = []
+
+    for u in users_opd:
+        # Hitung jumlah upload disetujui bulan ini
+        uploads = db.query(models.Dataset).filter(
+            models.Dataset.user_id == u.id,
+            extract('month', models.Dataset.created_at) == current_month,
+            extract('year', models.Dataset.created_at) == current_year,
+            models.Dataset.status == "approved"
+        )
+        
+        count = uploads.count()
+        last_data = uploads.order_by(models.Dataset.created_at.desc()).first()
+        avg_q = db.query(func.avg(models.Dataset.quality_score)).filter(models.Dataset.user_id == u.id).scalar() or 0
+
+        # Tentukan Status
+        if count >= 12:
+            status = "Lengkap"
+            lengkap_count += 1
+        elif count > 0:
+            status = "Kurang"
+            kurang_count += 1
+        else:
+            status = "Belum Kirim"
+            belum_kirim_count += 1
+
+        table_data.append({
+            "user_id": u.id,
+            "opd_name": u.full_name,
+            "last_submit": last_data.created_at if last_data else None,
+            "status": status,
+            "progress": f"{count}/12",
+            "upload_count": count,
+            "avg_quality": round(float(avg_q), 2),
+            "email": u.email,
+            "username": u.username
+        })
+
+    # 2. Logika Tren 6 Bulan Terakhir (Line Chart)
+    line_chart = []
+    for i in range(5, -1, -1):
+        target_date = now - timedelta(days=i*30)
+        m = target_date.month
+        y = target_date.year
+        
+        # Hitung berapa OPD yang 'Lengkap' pada bulan tersebut
+        complete_this_month = 0
+        for u in users_opd:
+            c = db.query(models.Dataset).filter(
+                models.Dataset.user_id == u.id,
+                extract('month', models.Dataset.created_at) == m,
+                extract('year', models.Dataset.created_at) == y,
+                models.Dataset.status == "approved"
+            ).count()
+            if c >= 12: complete_this_month += 1
+        
+        percentage = (complete_this_month / total_opd * 100) if total_opd > 0 else 0
+        line_chart.append({"bulan": target_date.strftime("%b"), "persentase": round(percentage, 2)})
+
+    return {
+        "cards": {
+            "total_opd": total_opd,
+            "lengkap": lengkap_count,
+            "kurang": kurang_count,
+            "belum_kirim": belum_kirim_count
+        },
+        "pie_chart": {
+            "Lengkap": lengkap_count,
+            "Kurang": kurang_count,
+            "Belum Kirim": belum_kirim_count
+        },
+        "line_chart": line_chart,
+        "table_data": table_data
+    }
+
+# Endpoint Aksi: Reminder
+@router.post("/remind/{user_id}")
+def send_reminder(user_id: int, db: Session = Depends(get_db), admin: models.User = Depends(deps.get_admin_user)):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user: raise HTTPException(status_code=404, detail="User tidak ditemukan")
+    
+    # Di sini nantinya bisa integrasi ke Email atau WA blast
+    return {"message": f"Reminder notifikasi berhasil dikirim ke {user.full_name} ({user.email})"}
+
+--- FILE: app\api\endpoints\source_type.py ---
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+from typing import List
+
+router = APIRouter()
+
+@router.post("/", response_model=schemas.SourceTypeOut)
+def create_source_type(cat_in: schemas.SourceTypeCreate, db: Session = Depends(get_db)):
+    existing = db.query(models.SourceType).filter(models.SourceType.name == cat_in.name).first()
+    if existing:
+        return existing # Jika sudah ada, kembalikan yang lama
+    
+    new_cat = models.SourceType(name=cat_in.name)
+    db.add(new_cat)
+    db.commit()
+    db.refresh(new_cat)
+    return new_cat
+
+@router.get("/", response_model=List[schemas.SourceTypeOut])
+def list_source_type(db: Session = Depends(get_db)):
+    return db.query(models.SourceType).all()
+
+--- FILE: app\api\endpoints\sources.py ---
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+from typing import List
+
+router = APIRouter()
+
+# Menambah Sumber Data Baru (OPD/BPS/dll)
+@router.post("/", response_model=schemas.SourceOut)
+def create_source(source_in: schemas.SourceCreate, db: Session = Depends(get_db)):
+    # Cek apakah nama sudah ada
+    existing = db.query(models.Source).filter(models.Source.name == source_in.name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Nama Sumber Data sudah terdaftar")
+    
+    new_source = models.Source(
+        name=source_in.name,
+        type=source_in.type
+    )
+    db.add(new_source)
+    db.commit()
+    db.refresh(new_source)
+    return new_source
+
+# Mengambil daftar semua Sumber Data
+@router.get("/", response_model=List[schemas.SourceOut])
+def list_sources(db: Session = Depends(get_db)):
+    return db.query(models.Source).all()
+
+--- FILE: app\api\endpoints\users.py ---
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from typing import List
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+from app.core import security
+from app.api import deps
+
+router = APIRouter()
+
+# 1. CREATE USER
+@router.post("/", response_model=schemas.UserOut)
+def create_user(
+    user_in: schemas.UserCreate, 
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(deps.get_admin_user) # Proteksi Admin
+):
+    # Cek apakah username/email sudah ada
+    user = db.query(models.User).filter(
+        (models.User.username == user_in.username) | (models.User.email == user_in.email)
+    ).first()
+    if user:
+        raise HTTPException(status_code=400, detail="Username atau Email sudah terdaftar")
+    
+    new_user = models.User(
+        username=user_in.username,
+        email=user_in.email,
+        full_name=user_in.full_name,
+        role=user_in.role,
+        hashed_password=security.get_password_hash(user_in.password), # Hash password
+        is_active=user_in.is_active
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
+# 2. READ ALL USERS
+@router.get("/", response_model=List[schemas.UserOut])
+def read_users(
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(deps.get_admin_user)
+):
+    return db.query(models.User).all()
+
+# 3. READ USER BY ID
+@router.get("/{user_id}", response_model=schemas.UserOut)
+def read_user_by_id(
+    user_id: int, 
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(deps.get_admin_user)
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User tidak ditemukan")
+    return user
+
+# 4. UPDATE USER
+@router.put("/{user_id}", response_model=schemas.UserOut)
+def update_user(
+    user_id: int,
+    user_in: schemas.UserUpdate,
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(deps.get_admin_user)
+):
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User tidak ditemukan")
+    
+    update_data = user_in.dict(exclude_unset=True)
+    
+    # Jika admin mengupdate password
+    if "password" in update_data:
+        db_user.hashed_password = security.get_password_hash(update_data["password"])
+        del update_data["password"]
+    
+    # Update field lainnya secara dinamis
+    for field, value in update_data.items():
+        setattr(db_user, field, value)
+    
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+# 5. DELETE USER
+@router.delete("/{user_id}")
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(deps.get_admin_user)
+):
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User tidak ditemukan")
+    
+    # Proteksi: Admin tidak bisa menghapus dirinya sendiri agar tidak terkunci
+    if db_user.id == admin.id:
+        raise HTTPException(status_code=400, detail="Admin tidak bisa menghapus akunnya sendiri")
+        
+    db.delete(db_user)
+    db.commit()
+    return {"message": f"User '{db_user.username}' berhasil dihapus"}
+
+--- FILE: app\core\cloudinary_config.py ---
+import os
+import cloudinary
+import cloudinary.uploader
+from dotenv import load_dotenv
+
+load_dotenv()
+cloudinary.config( 
+  cloud_name = os.getenv("CLOUD_NAME"), 
+  api_key = os.getenv("API_KEY"), 
+  api_secret = os.getenv("API_SECRET"),
+  secure = True
+)
+
+def upload_image_to_cloudinary(file_source, folder_name, resource_type="image", filename=None):
+    """
+    file_source bisa berupa file_stream atau bytes.
+    """
+    upload_options = {
+        "folder": folder_name,
+        "resource_type": resource_type,
+        "use_filename": True,
+        "unique_filename": True,
+        "invalidate": True 
+    }
+    
+    if resource_type == "raw" and filename:
+        upload_options["public_id"] = filename
+
+    result = cloudinary.uploader.upload(file_source, **upload_options)
+    return result.get("secure_url"), result.get("public_id")
+
+--- FILE: app\core\security.py ---
+# app/core/security.py
+from datetime import datetime, timedelta
+from typing import Any, Union, List
+from jose import jwt
+from passlib.context import CryptContext
+from fastapi import HTTPException, status
+
+# PENTING: Ganti SECRET_KEY dengan string acak yang kuat
+SECRET_KEY = "MIMIKA_DATAHUB_SUPER_SECRET_KEY_123"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 1 hari
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
+
+def create_access_token(subject: Union[str, Any]) -> str:
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode = {"exp": expire, "sub": str(subject)}
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+# ==========================================
+# INTERVENS: ROLE-BASED ACCESS CONTROL (RBAC)
+# ==========================================
+class RoleChecker:
+    """
+    Kelas Dependency Otorisasi RBAC.
+    Digunakan untuk memproteksi endpoint berdasarkan 'role' pengguna.
+    Sangat esensial untuk membedakan hak akses 'admin' dan 'user' (OPD).
+    """
+    def __init__(self, allowed_roles: List[str]):
+        self.allowed_roles = allowed_roles
+
+    def __call__(self, current_user: Any):
+        # Asumsi: current_user adalah instansiasi model User hasil injeksi get_current_user
+        if not current_user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Sesi tidak valid atau telah berakhir."
+            )
+            
+        if current_user.role not in self.allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Pelanggaran Otorisasi: Role '{current_user.role}' tidak memiliki izin untuk mengakses resource ini."
+            )
+            
+        return current_user
+
+--- FILE: app\db\base.py ---
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
+
+--- FILE: app\db\session.py ---
+import os
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+# Load .env
+load_dotenv()
+
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not SQLALCHEMY_DATABASE_URL:
+    raise ValueError("DATABASE_URL tidak ditemukan di .env")
+
+engine = create_engine(SQLALCHEMY_DATABASE_URL)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine
+)
+
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+--- FILE: app\main.py ---
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import os
+
+from app.api.api_router import api_router
+
+app = FastAPI(
+    title="Mimika DataHub - Versi 1",
+    description="Core Backend API with Spatial/GIS Capabilities"
+)
+
+# Inisialisasi folder static untuk aset publik jika diperlukan
+if not os.path.exists("static"):
+    os.makedirs("static")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+# Daftar whitelist domain (Disiapkan untuk transisi ke Production)
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    # "https://domain-production-anda.com",
+]
+
+# Konfigurasi CORS Middleware
+# Saat ini menggunakan ["*"] untuk kelancaran fase development.
+# Sangat krusial agar Map Viewer di Frontend bebas melakukan fetch API GIS.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Ganti menjadi `allow_origins=origins` saat deploy ke server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Registrasi Router Utama
+app.include_router(api_router, prefix="/api/v1")
+
+@app.get("/")
+def root():
+    return {"message": "Mimika DataHub API is Running"}
+
+--- FILE: app\models\models.py ---
+from sqlalchemy import Column, Integer, Float, String, ForeignKey, DateTime, JSON, Text, Boolean
+from sqlalchemy.orm import relationship
+from app.db.base import Base
+import datetime
+
+class District(Base):
+    """Tabel Master Distrik (Wilayah Administratif Kabupaten Mimika)"""
+    __tablename__ = "districts"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True, nullable=False)
+    
+    datasets = relationship("Dataset", back_populates="district")
+    # Relasi One-to-One ke DistrictProfile
+    profile = relationship("DistrictProfile", back_populates="district", uselist=False, cascade="all, delete-orphan")
+
+class DistrictProfile(Base):
+    """Tabel Master Data Statis untuk Informasi Profil Distrik (Pop-up Peta)"""
+    __tablename__ = "district_profiles"
+    id = Column(Integer, primary_key=True, index=True)
+    # unique=True memastikan 1 Distrik hanya memiliki 1 Profil
+    district_id = Column(Integer, ForeignKey("districts.id"), unique=True, nullable=False)
+    
+    luas_wilayah = Column(Float, nullable=True) # Dalam km persegi
+    jumlah_penduduk = Column(Integer, nullable=True)
+    deskripsi = Column(Text, nullable=True)
+    batas_wilayah = Column(Text, nullable=True) # Misal: "Utara: Kab. A, Selatan: Laut Arafura"
+    
+    district = relationship("District", back_populates="profile")
+
+class Source(Base):
+    """Tabel OPD atau Sumber Data (BPS, Dinas Kesehatan, dll)"""
+    __tablename__ = "sources"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    type = Column(String) # bps, opd, kementerian, dll
+    
+    datasets = relationship("Dataset", back_populates="owner")
+
+class Category(Base):
+    """Tabel Kategori Data (Kependudukan, Kesehatan, dll)"""
+    __tablename__ = "categories"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    template_url = Column(String, nullable=True)
+    
+    datasets = relationship("Dataset", back_populates="category")
+
+class SourceType(Base):
+    """Tabel Jenis Sumber ())"""
+    __tablename__ = "source_type"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    
+    datasets = relationship("Dataset", back_populates="sourceType")
+
+class Dataset(Base):
+    """Tabel Metadata File (Judul, Nama Kolom asli)"""
+    __tablename__ = "datasets"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    title = Column(String, nullable=False)
+    dataset_type = Column(String)
+
+    source_id = Column(Integer, ForeignKey("sources.id"))
+    category_id = Column(Integer, ForeignKey("categories.id"))
+    source_type_id = Column(Integer, ForeignKey("source_type.id"))
+    
+    # Penambahan Foreign Key untuk Relasi Spasial (GIS)
+    # nullable=True agar dataset tingkat Kabupaten (non-distrik) tetap dapat disimpan
+    district_id = Column(Integer, ForeignKey("districts.id"), nullable=True)
+
+    year = Column(Integer)
+    period = Column(String)
+    description = Column(Text)
+    view_count = Column(Integer, default=0)
+    image_url = Column(String, nullable=True)
+    file_url = Column(String, nullable=True)
+    # merged_image_url = Column(String, nullable=True)
+
+    total_rows = Column(Integer, default=0)
+    quality_score = Column(Float, default=0.0) # Skor 0-100
+    last_ingest_stats = Column(JSON) # Menyimpan info: {"duplicates": 5, "nulls": 2}
+    
+    # Kita simpan daftar kolom yang sudah dirapikan di sini (misal: ["nama", "tahun", "jumlah"])
+    headers = Column(JSON) 
+    
+    # Workflow Persetujuan Data
+    status = Column(String, default="pending")
+    structure_type = Column(String, default="tabular")
+    
+    # Workflow Karantina Spasial (Fase 4 - Anomaly Handling)
+    spatial_status = Column(String, default="mapped") # "mapped" jika dikenali AI, "unmapped" jika gagal dikenali
+    needs_review = Column(Boolean, default=False) # Flag penanda butuh intervensi manual dari Admin
+    
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    owner = relationship("Source", back_populates="datasets")
+    rows = relationship("DataRow", back_populates="dataset", cascade="all, delete-orphan")
+    category = relationship("Category", back_populates="datasets")
+    sourceType = relationship("SourceType", back_populates="datasets")
+    uploader = relationship("User")
+    
+    # Penambahan Relationship ke entitas District
+    district = relationship("District", back_populates="datasets")
+
+class DataRow(Base):
+    """Tabel Penampung Isi File yang Sudah Bersih"""
+    __tablename__ = "data_rows"
+    id = Column(Integer, primary_key=True, index=True)
+    dataset_id = Column(Integer, ForeignKey("datasets.id"))
+    
+    # Isi satu baris file dalam format JSON (Contoh: {"nama": "Mimika Baru", "jumlah": 150})
+    # Ini sangat fleksibel untuk jumlah kolom berapapun.
+    content = Column(JSON) 
+    
+    # Hash unik untuk mencegah redundansi (Cek apakah baris isinya sama persis)
+    row_hash = Column(String, index=True)
+
+    dataset = relationship("Dataset", back_populates="rows")
+
+class Survey(Base):
+    __tablename__ = "surveys"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    description = Column(String)
+    location = Column(String)
+    start_date = Column(DateTime)
+    end_date = Column(DateTime)
+    # Menyimpan struktur pertanyaan: [{"text": "Puas?", "type": "rating"}, ...]
+    questions = Column(JSON) 
+    status = Column(String, default="active") # active / closed
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    responses = relationship("SurveyResponse", back_populates="survey", cascade="all, delete-orphan")
+
+class SurveyResponse(Base):
+    __tablename__ = "survey_responses"
+    id = Column(Integer, primary_key=True, index=True)
+    survey_id = Column(Integer, ForeignKey("surveys.id"))
+    # Menyimpan jawaban responden: {"pertanyaan_1": "Sangat Puas", "pertanyaan_2": 5}
+    answers = Column(JSON)
+    email = Column(String, nullable=True) 
+    submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    survey = relationship("Survey", back_populates="responses")
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    full_name = Column(String)
+    role = Column(String, default="user")
+    email = Column(String, unique=True, index=True)
+    is_active = Column(Boolean, default=True)
+
+--- FILE: app\schemas\schemas.py ---
+from pydantic import BaseModel
+from typing import List, Optional, Any, Dict
+from datetime import datetime
+
+# --- GIS / SPATIAL SCHEMAS ---
+class DistrictProfileBase(BaseModel):
+    luas_wilayah: Optional[float] = None
+    jumlah_penduduk: Optional[int] = None
+    deskripsi: Optional[str] = None
+    batas_wilayah: Optional[str] = None
+
+class DistrictProfileCreate(DistrictProfileBase):
+    district_id: int
+
+# FASE 1: Schema untuk validasi form input Admin saat mengupdate profil
+class DistrictProfileUpdate(DistrictProfileBase):
+    pass
+
+class DistrictProfileOut(DistrictProfileBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class DistrictBase(BaseModel):
+    name: str
+
+class DistrictCreate(DistrictBase):
+    pass
+
+class DistrictOut(DistrictBase):
+    id: int
+    profile: Optional[DistrictProfileOut] = None # Include statis info on demand
+    class Config:
+        from_attributes = True
+
+class SpatialStatResponse(BaseModel):
+    """
+    Kontrak response untuk agregasi Peta GIS.
+    Menggunakan format yang memudahkan iterasi O(1) atau mapping di frontend.
+    """
+    district_name: str
+    total_dataset: int
+    total_rows: Optional[int] = None
+    avg_quality: Optional[float] = None
+
+
+# --- CATEGORY SCHEMAS ---
+class CategoryCreate(BaseModel):
+    name: str
+
+class CategoryOut(BaseModel):
+    id: int
+    name: str
+    template_url: Optional[str] = None
+    class Config:
+        from_attributes = True
+
+# --- SOURCE SCHEMAS ---
+class SourceBase(BaseModel):
+    name: str
+    type: str
+
+class SourceCreate(SourceBase):
+    pass
+
+class SourceOut(SourceBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class SourceTypeCreate(BaseModel):
+    name: str
+
+class SourceTypeOut(BaseModel):
+    id: int
+    name: str
+    class Config:
+        from_attributes = True
+
+# --- DATASET SCHEMAS ---
+class DatasetCreate(BaseModel):
+    title: str
+    source_id: int
+    category_id: int
+    source_type_id: int
+    district_id: Optional[int] = None # Ditambahkan untuk relasi GIS
+    year: int
+    period: str
+    dataset_type: str
+    description: Optional[str] = None
+
+class DatasetOut(DatasetCreate):
+    id: int
+    user_id: Optional[int]
+    status: str
+    headers: Optional[List[str]] = None
+    total_rows: int
+    quality_score: float
+    created_at: datetime
+    category: CategoryOut
+    sourceType: SourceTypeOut
+    district: Optional[DistrictOut] = None # Ditambahkan untuk output detail dataset
+    class Config:
+        from_attributes = True
+
+# --- UPLOAD SCHEMAS ---
+class Stats(BaseModel):
+    inserted: int
+    duplicates: int
+    empty_rows: int
+    empty_cells: int
+    total: int
+    quality_score: float
+
+
+class UploadResponse(BaseModel):
+    status: str
+    dataset_id: int
+    headers_found: list[str]
+    stats: Stats
+
+# --- SURVEY SCHEMAS ---
+class SurveyCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    location: Optional[str] = None
+    questions: List[Dict[str, Any]]
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+
+class SurveyResponseCreate(BaseModel):
+    survey_id: int
+    email: Optional[str] = None
+    answers: Dict[str, Any]
+
+# --- USER SCHEMAS ---
+class UserBase(BaseModel):
+    username: str
+    email: str
+    full_name: str
+    role: str = "user" # 'admin' atau 'user'
+    is_active: bool = True
+
+class UserCreate(UserBase):
+    password: str
+
+class UserUpdate(BaseModel):
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    password: Optional[str] = None # Opsional, diisi jika ingin ganti password
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class UserOut(UserBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+# --- MONITORING SCHEMAS ---
+class OPDMonitoringDetail(BaseModel):
+    user_id: int
+    opd_name: str
+    last_submit: Optional[datetime] = None
+    status: str # 'Lengkap', 'Kurang', 'Belum Kirim'
+    progress: str # 'n/12'
+    upload_count: int
+    avg_quality: float
+    email: Optional[str]
+    username: str
+
+class MonitoringSummaryResponse(BaseModel):
+    cards: Dict[str, Any]
+    pie_chart: Dict[str, int]
+    line_chart: List[Dict[str, Any]]
+    table_data: List[OPDMonitoringDetail]
+
+class FilterItem(BaseModel):
+    id: int
+    name: str
+    count: int
+
+class SidebarStats(BaseModel):
+    categories: List[FilterItem]
+    sources: List[FilterItem]
+    source_types: List[FilterItem]
+    years: List[FilterItem]
+
+class DatasetRecentOut(BaseModel):
+    id: int
+    title: str
+    image_url: Optional[str]
+    template_url: Optional[str] # Diambil dari relasi kategori
+    category_name: str
+    source_name: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+        # --- ATLAS / SCROLLYTELLING SCHEMAS ---
+
+class AtlasMetadata(BaseModel):
+    """Skema metadata untuk memberikan konteks naratif pada setiap indikator atlas."""
+    title: str
+    unit: str
+    description: str
+    color_scheme: str # Contoh: 'Reds', 'Blues', 'Greens'
+
+class AtlasIndicatorResponse(BaseModel):
+    """
+    DTO Utama untuk Atlas. 
+    Memisahkan antara identitas indikator, metadata narasi, 
+    dan data spasial yang dipetakan langsung ke key distrik (O(1) mapping).
+    """
+    indicator: str
+    metadata: AtlasMetadata
+    data: Dict[str, float] # Format: {"mimikabaru": 12.5, "wania": 15.0, ...}
+
+class AtlasIndicatorMetaBrief(BaseModel):
+    """Skema ringkas untuk list metadata indikator (pilihan menu/sidebar)."""
+    key: str
+    metadata: AtlasMetadata
+
+--- FILE: app\services\atlas_service.py ---
+from sqlalchemy.orm import Session
+from sqlalchemy import func, cast, Float, desc
+from app.models import models
+import re
+
+class AtlasService:
+    """
+    Information Expert: Bertanggung jawab melakukan agregasi data spasial 
+    langsung dari kolom JSON di tabel data_rows.
+    """
+
+    @staticmethod
+    def get_indicator_data(db: Session, indicator_key: str):
+        """
+        Melakukan agregasi (rata-rata) nilai indikator tertentu per distrik.
+        Contoh: indicator_key = 'stunting' atau 'jumlah_penduduk'
+        """
+        
+        # 1. Menyiapkan query untuk mengambil data dari JSON 'content'
+        # PERBAIKAN: Menggunakan .astext.cast(Float) bawaan SQLAlchemy 
+        # karena kolom di database adalah tipe JSON, bukan JSONB.
+        
+        query = (
+            db.query(
+                models.District.name.label("district_name"),
+                func.avg(
+                    cast(
+                        models.DataRow.content[indicator_key].astext,
+                        Float
+                    )
+                ).label("average_value")
+            )
+            .join(models.Dataset, models.Dataset.id == models.DataRow.dataset_id)
+            .join(models.District, models.District.id == models.Dataset.district_id)
+            .filter(models.Dataset.status == "approved") # Hanya data yang sudah divalidasi
+            .filter(models.DataRow.content[indicator_key].astext.isnot(None))
+            .group_by(models.District.name)
+        )
+
+        results = query.all()
+
+        # 2. Melakukan post-processing untuk mencocokkan format key di Frontend (MimikaMap.tsx)
+        formatted_data = {}
+        for row in results:
+            clean_key = row.district_name.lower().replace(" ", "")
+            formatted_data[clean_key] = round(row.average_value, 2) if row.average_value else 0
+
+        return formatted_data
+
+    @staticmethod
+    def get_available_indicators(db: Session):
+        """
+        Mengambil daftar kolom (headers) yang tersedia dari dataset yang sudah di-approve.
+        """
+        latest_datasets = (
+            db.query(models.Dataset.headers)
+            .filter(models.Dataset.status == "approved")
+            .filter(models.Dataset.headers.isnot(None))
+            .all()
+        )
+        
+        unique_indicators = set()
+        for ds in latest_datasets:
+            if ds.headers:
+                unique_indicators.update(ds.headers)
+        
+        return list(unique_indicators)
+
+    @staticmethod
+    def get_indicator_metadata(indicator_key: str):
+        """
+        Pure Fabrication: Memberikan metadata tambahan seperti satuan atau narasi
+        berdasarkan key indikator yang diminta.
+        """
+        metadata_map = {
+            "stunting": {
+                "title": "Prevalensi Stunting",
+                "unit": "%",
+                "description": "Persentase balita yang mengalami gangguan pertumbuhan (stunting) berdasarkan standar WHO.",
+                "color_scheme": "Reds" 
+            },
+            "jumlah_penduduk": {
+                "title": "Kepadatan Penduduk",
+                "unit": "Jiwa",
+                "description": "Total populasi penduduk yang menetap di wilayah distrik terkait.",
+                "color_scheme": "Blues" 
+            },
+            "pdrb": {
+                "title": "Produk Domestik Regional Bruto",
+                "unit": "Miliar Rp",
+                "description": "Nilai tambah bruto yang timbul dari seluruh sektor ekonomi di distrik tersebut.",
+                "color_scheme": "Greens" 
+            }
+        }
+        
+        return metadata_map.get(indicator_key.lower(), {
+            "title": indicator_key.replace("_", " ").title(),
+            "unit": "-",
+            "description": "Indikator pembangunan sektoral Kabupaten Mimika.",
+            "color_scheme": "Blues"
+        })
+
+--- FILE: app\services\cleaning_engine.py ---
+import pandas as pd
+import io
+import hashlib
+import json
+import re
+import numpy as np
+from rapidfuzz import process, fuzz
+
+class CleaningEngine:
+    @staticmethod
+    def is_semi_structured(df_raw):
+
+        # banyak merged header khas html xls
+        repeated_header_pattern = False
+
+        for i in range(min(5, len(df_raw))):
+
+            row = df_raw.iloc[i]
+
+            values = []
+
+            for v in row:
+                if pd.notna(v):
+
+                    s = str(v).strip().lower()
+
+                    if s not in ["nan", "none", ""]:
+                        values.append(s)
+
+            if len(values) >= 3:
+
+                unique_ratio = len(set(values)) / len(values)
+
+                # merged cell khas html
+                if unique_ratio < 0.5:
+                    repeated_header_pattern = True
+
+        # banyak unnamed/merged style
+        merged_like_columns = (
+            df_raw.shape[1] >= 6
+        )
+
+        return repeated_header_pattern and merged_like_columns
+
+    @staticmethod
+    def detect_row_type(row):
+        values = [
+            str(v).strip()
+            for v in row
+            if pd.notna(v)
+        ]
+
+        if not values:
+            return "empty"
+
+        # section/title
+        if len(values) == 1 and len(values[0]) > 10:
+            return "section"
+
+        numeric_count = sum(
+            1 for v in values
+            if re.match(r'^[\d.,]+$', v)
+        )
+
+        if numeric_count >= 1:
+            return "data"
+
+        return "unknown"
+
+    @staticmethod
+    def parse_semi_structured(df_raw):
+        cleaned_records = []
+
+        current_section = "general"
+
+        for idx, row in df_raw.iterrows():
+
+            row_type = CleaningEngine.detect_row_type(row)
+
+            values = [
+                str(v).strip()
+                for v in row
+                if pd.notna(v)
+            ]
+
+            if row_type == "section":
+                current_section = values[0]
+                continue
+
+            if row_type != "data":
+                continue
+
+            semantic_data = {}
+
+            if len(values) >= 1:
+                semantic_data["label"] = CleaningEngine.clean_text_smart(values[0])
+
+            # ambil angka pertama
+            numeric_values = []
+
+            for val in values[1:]:
+                cleaned = CleaningEngine.clean_numeric_smart(val)
+
+                if isinstance(cleaned, (int, float)):
+                    numeric_values.append(cleaned)
+
+            if numeric_values:
+                semantic_data["nilai"] = numeric_values[0]
+
+            if len(values) >= 3:
+                semantic_data["metadata"] = values[2:]
+
+            semantic_data["section"] = current_section
+
+            row_json = json.dumps(semantic_data, sort_keys=True, default=str)
+
+            cleaned_records.append({
+                "content": semantic_data,
+                "row_hash": hashlib.md5(row_json.encode()).hexdigest()
+            })
+
+        return {
+            "structure_type": "semi_structured",
+            "headers": ["section", "label", "nilai", "metadata"],
+            "records": cleaned_records,
+            "empty_rows": 0,
+            "empty_cells": 0
+        }
+
+    @staticmethod
+    def clean_text_smart(text: str) -> str:
+        """Pembersihan teks: spasi tanda baca, double space, dan title case"""
+        if not text or pd.isna(text):
+            return None
+        
+        text = str(text)
+        # 1. Perbaikan spasi tanda baca: "," atau "." harus diikuti spasi (contoh: "A,B" -> "A, B")
+        text = re.sub(r'([,.])(?!\s|$)', r'\1 ', text)
+        
+        # 2. Hapus spasi SEBELUM tanda baca (contoh: "Data , Baru" -> "Data, Baru")
+        text = re.sub(r'\s+([,.])', r'\1', text)
+        
+        # 3. Hapus spasi ganda di tengah kalimat
+        text = re.sub(r'\s+', ' ', text)
+        
+        # 4. Trim dan ubah ke Title Case agar rapi
+        return text.strip().title()
+
+    @staticmethod
+    def clean_numeric_smart(val: any) -> any:
+        """Pembersihan angka: menangani format Rp, ,00, dan pemisah ribuan Indonesia"""
+        if pd.isna(val) or val == "" or val is None:
+            return None
+        
+        # Jika sudah int/float murni, langsung kembalikan
+        if isinstance(val, (int, float, np.integer, np.floating)):
+            return float(val)
+        
+        s_val = str(val).strip().lower()
+
+        # 1. Hilangkan simbol mata uang dan karakter non-penting
+        s_val = s_val.replace('rp', '').replace('idr', '').replace('$', '').replace(' ', '')
+
+        # 2. Tangani format ekor desimal kosong ",00" atau ".00"
+        if s_val.endswith(',00') or s_val.endswith('.00'):
+            s_val = s_val[:-3]
+
+        try:
+            # 3. Logika Pemisah Ribuan (Indonesia: Titik ribuan, Koma desimal)
+            if '.' in s_val and ',' in s_val:
+                # Contoh: 1.250.000,50 -> 1250000.50
+                s_val = s_val.replace('.', '').replace(',', '.')
+            elif ',' in s_val:
+                # Cek jika koma berfungsi sebagai desimal (misal 150,5)
+                parts = s_val.split(',')
+                if len(parts[-1]) <= 2: # Asumsi desimal biasanya 1-2 angka
+                    s_val = s_val.replace(',', '.')
+                else:
+                    # Jika lebih dari 2 angka, mungkin itu salah ketik ribuan pakai koma
+                    s_val = s_val.replace(',', '')
+            else:
+                # Bersihkan sisa karakter non-angka kecuali titik desimal
+                s_val = re.sub(r'[^\d.]', '', s_val)
+            
+            if not s_val: return None
+            
+            final_num = float(s_val)
+            # Kembalikan sebagai Integer jika tidak ada komanya (.0)
+            return int(final_num) if final_num.is_integer() else final_num
+        except:
+            return str(val).strip() # Balikkan string jika gagal konversi
+
+    @staticmethod
+    def fuzzy_match_district(val: any) -> str:
+        """
+        AI Parser: Menggunakan Levenshtein Distance untuk mendeteksi nama distrik.
+        Akan mereturn nama standar jika similarity >= 80%.
+        """
+        if pd.isna(val) or val is None or str(val).strip() == "":
+            return None
+            
+        text = str(val).strip().lower()
+        
+        # 1. Strip Prefiks Umum (Misal: "Kec.", "Kecamatan", "Distrik", "Wilayah")
+        text = re.sub(r'^(kecamatan|kec\.|distrik|wilayah)\s*', '', text).strip()
+        
+        # 2. Kamus Absolut 18 Distrik di Mimika (Sesuai rujukan spasial GeoJSON)
+        master_districts = [
+            "Mimika Baru", "Kuala Kencana", "Tembagapura", "Wania", "Iwaka",
+            "Kwamki Narama", "Mimika Timur", "Mimika Tengah", "Mimika Barat",
+            "Agimuga", "Jila", "Jita", "Mimika Timur Jauh", "Mimika Barat Jauh",
+            "Mimika Barat Tengah", "Amar", "Hoya", "Alama"
+        ]
+        
+        # 3. Ekstraksi kemiripan dengan algoritma WRatio (Rapidfuzz)
+        match = process.extractOne(text, master_districts, scorer=fuzz.WRatio)
+        
+        if match:
+            best_match, score, _ = match
+            if score >= 80: # Threshold aman untuk toleransi typo dari OPD
+                return best_match
+                
+        # Jika tidak ada kecocokan absolut, kembalikan ke pembersihan teks standar.
+        return CleaningEngine.clean_text_smart(val)
+
+    @staticmethod
+    def clean_and_align(file_contents: bytes, filename: str = ""):
+        """Membaca file dan melakukan pembersihan data secara otomatis"""
+        ext = filename.split('.')[-1].lower() if filename else ""
+        file_buffer = io.BytesIO(file_contents)
+        
+        try:
+            # logic pembacaan berdasarkan ekstensi
+            if ext == 'xls':
+                try:
+                    df_raw = pd.read_excel(file_buffer, header=None, engine='xlrd')
+                except Exception as e:
+                    file_buffer.seek(0)
+                    try:
+                        dfs = pd.read_html(file_buffer, header=None)
+                        if not dfs: raise ValueError("Tidak ditemukan tabel HTML")
+                        df_raw = max(dfs, key=lambda d: d.shape[0] * d.shape[1])
+                    except ValueError:
+                        file_buffer.seek(0)
+                        df_raw = pd.read_csv(file_buffer, header=None, sep='\t')
+
+            elif ext == 'xlsx':
+                df_raw = pd.read_excel(file_buffer, header=None, engine='openpyxl')
+            elif ext == 'csv':
+                df_raw = pd.read_csv(file_buffer, header=None)
+            else:
+                try:
+                    df_raw = pd.read_excel(file_buffer, header=None)
+                except:
+                    file_buffer.seek(0)
+                    df_raw = pd.read_csv(file_buffer, header=None)
+        except Exception as e:
+            raise Exception(f"Gagal membaca isi file {ext if ext else ''}: {str(e)}")
+
+        # === PERBAIKAN 1: Netralkan struktur kolom dari bawaan HTML/Excel ===
+        df_raw.columns = range(df_raw.shape[1])
+
+        if CleaningEngine.is_semi_structured(df_raw):
+            return CleaningEngine.parse_semi_structured(df_raw)
+
+        # === PERBAIKAN 3: Bersihkan spasi kosong dengan aman (hanya pada kolom string) ===
+        df_raw = df_raw.replace({'\xa0': ' '}, regex=True)
+        # Terapkan regex hapus spasi kosong hanya pada tipe data object/string agar tidak error
+        for col in df_raw.select_dtypes(include=['object']).columns:
+            df_raw[col] = df_raw[col].replace(r'^\s*$', np.nan, regex=True)
+
+        # ===============================
+        # 1. DETEKSI & GABUNG MULTI-HEADER
+        # ===============================
+        
+        first_row_idx = 0
+        for i, row in df_raw.iterrows():
+            if row.count() > 1:
+                first_row_idx = i
+                break
+        
+        header_candidates = df_raw.iloc[first_row_idx : first_row_idx + 3].copy()
+        header_candidates = header_candidates.ffill(axis=1)
+
+        header_rows_count = 1
+        # === PERBAIKAN 2: Logika Header lebih cerdas agar data teks tidak tertelan ===
+        for i in range(1, len(header_candidates)):
+            row = header_candidates.iloc[i]
+            numeric_count = pd.to_numeric(row, errors='coerce').notnull().sum()
+            
+            # Cek apakah ada data dalam baris ini yang karakternya panjang (indikasi ini adalah data riil, bukan header)
+            has_long_text = any(isinstance(val, str) and len(str(val)) > 30 for val in row.dropna())
+
+            # Jika banyak angka ATAU ada teks yang panjang, HENTIKAN (ini adalah baris data!)
+            if numeric_count > 1 or has_long_text:
+                break
+            else:
+                header_rows_count = i + 1
+
+        # Gabungkan baris-baris header menjadi satu string
+        combined_headers = []
+        actual_header_df = header_candidates.iloc[:header_rows_count]
+        
+        for col_idx in range(len(actual_header_df.columns)):
+            levels = actual_header_df.iloc[:, col_idx].dropna().astype(str).tolist()
+            clean_levels = [str(l).strip() for l in levels if str(l).strip().lower() not in ['nan', 'unnamed']]
+            combined_name = "_".join(dict.fromkeys(clean_levels))
+            
+            # Jika kolom tidak punya nama sama sekali setelah dibersihkan
+            if not combined_name: combined_name = f"unnamed_{col_idx}"
+            combined_headers.append(combined_name)
+
+        data_start_idx = first_row_idx + header_rows_count
+        
+        while data_start_idx < len(df_raw) and df_raw.iloc[data_start_idx].dropna().empty:
+            data_start_idx += 1
+
+        df = df_raw.iloc[data_start_idx:].reset_index(drop=True)
+        df.columns = combined_headers
+
+        # ==================================
+        # 2. PEMBERSIHAN KOLOM & BARIS KOSONG
+        # ==================================
+        
+        # Hapus kolom yang namanya kosong sama sekali
+        df = df.loc[:, [bool(str(c).strip()) for c in df.columns]]
+        
+        # Bersihkan nama kolom menggunakan fungsi yang sudah Anda buat
+        def clean_header_name(col):
+            if not col: return "unnamed_column"
+            c = str(col).strip().lower()
+            c = re.sub(r'[^a-z0-9_]', '_', c)
+            return re.sub(r'_+', '_', c).strip('_')
+
+        df.columns = [clean_header_name(c) for c in df.columns]
+
+        headers = df.columns.tolist()
+
+        # Hapus kolom Unnamed yang tidak sengaja terbentuk
+        df = df.loc[:, ~df.columns.str.contains('unnamed')]
+        
+        # Hitung baris kosong sebelum dihapus
+        empty_rows_count = df.isna().all(axis=1).sum()
+        df = df.dropna(how='all').reset_index(drop=True)
+
+        # =========================
+        # 5. PROSES DATA DENGAN SMART EXTRACTION
+        # =========================
+        cleaned_records = []
+        total_empty_cells = 0 
+
+        # Scanner Heuristik untuk deteksi kolom spasial (Dari Branch Anda)
+        spatial_regex = re.compile(r'(?i)(distrik|wilayah|kecamatan|daerah|lokasi)')
+        
+        # Keyword Numerik (Gabungan dari Main dan Branch Anda)
+        numeric_keywords = [
+            'jumlah', 'nilai', 'harga', 'total', 'value', 'biaya', 
+            'realisasi', 'target', 'skor', 'tahun', 'kapasitas', 'luas'
+        ]
+
+        for _, row in df.iterrows():
+            row_dict = row.to_dict()
+            processed_row = {}
+            spatial_match_name = None # Marker penampung spasial
+
+            for key, val in row_dict.items():
+                if pd.isna(val) or val == "" or str(val).strip().lower() in ['nan', 'n/a', '-', 'null']:
+                    processed_row[key] = None
+                    total_empty_cells += 1
+                    continue
+
+                # Pipeline Eksekusi Berdasarkan Konteks Header
+                # Cek dulu apakah kolom ini berkaitan dengan spasial/wilayah
+                if spatial_regex.search(str(key)):
+                    # Intervensi GIS: Normalisasi nama wilayah menggunakan AI (Fuzzy Match)
+                    normalized_val = CleaningEngine.fuzzy_match_district(val)
+                    res = normalized_val
+                    spatial_match_name = normalized_val # Simpan marker untuk di-extract oleh Controller
+                # Cek jika kolom ini berkaitan dengan angka
+                elif any(kw in str(key).lower() for kw in numeric_keywords):
+                    res = CleaningEngine.clean_numeric_smart(val)
+                # Jika bukan keduanya, proses sebagai teks biasa
+                else:
+                    res = CleaningEngine.clean_text_smart(val)
+
+                if res is None:
+                    total_empty_cells += 1
+                
+                processed_row[key] = res
+
+            # Suntikkan Marker Spasial rahasia untuk Grouping & Melting di Ingest Controller
+            processed_row["_spatial_mapping"] = spatial_match_name
+
+            # =========================
+            # 6. HASH (UNTUK DETEKSI DUPLIKAT)
+            # =========================
+            row_json = json.dumps(processed_row, sort_keys=True, default=str)
+            row_hash = hashlib.md5(row_json.encode()).hexdigest()
+
+            cleaned_records.append({
+                "content": processed_row,
+                "row_hash": row_hash
+            })
+
+        return {
+            "structure_type": "tabular",
+            "headers": headers,
+            "records": cleaned_records,
+            "empty_rows": int(empty_rows_count),
+            "empty_cells": int(total_empty_cells)
+        }
+
+--- FILE: app\services\export_engine.py ---
+import pandas as pd
+import io
+
+class ExportEngine:
+    @staticmethod
+    def to_excel(data_list: list, filename: str):
+        df = pd.DataFrame(data_list)
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='MimikaDataHub_Clean')
+        output.seek(0)
+        return output
+
+    @staticmethod
+    def list_to_excel(data_list: list, sheet_name: str):
+        df = pd.DataFrame(data_list)
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name=sheet_name)
+        output.seek(0)
+        return output
+    
+    @staticmethod
+    def list_to_csv(data_list: list):
+        df = pd.DataFrame(data_list)
+        return df.to_csv(index=False).encode('utf-8')
+
+--- FILE: app\services\spatial_service.py ---
+from sqlalchemy.orm import Session
+from sqlalchemy import func, and_, case
+from app.models.models import District, Dataset, Category, DistrictProfile
+from typing import Dict, Any, List
+
+class SpatialService:
+    """
+    Pure Fabrication Service yang didedikasikan untuk kalkulasi dan agregasi
+    data spasial GIS tanpa mengotori domain logic dari dataset maupun core CRUD.
+    """
+
+    @staticmethod
+    def update_district_profile(db: Session, district_id: int, payload: dict) -> DistrictProfile:
+        """
+        [Fase 1] Engine Upsert (Update/Insert) untuk Manajemen Profil Wilayah.
+        Jika relasi profil untuk distrik ini belum ada, buat baru.
+        Jika sudah ada, timpa dengan data payload dari form Admin.
+        """
+        # 1. Validasi eksistensi Master District
+        district = db.query(District).filter(District.id == district_id).first()
+        if not district:
+            raise ValueError(f"Distrik dengan ID {district_id} tidak ditemukan.")
+
+        # 2. Ambil profil eksisting
+        profile = db.query(DistrictProfile).filter(DistrictProfile.district_id == district_id).first()
+
+        # 3. Logika Upsert
+        if not profile:
+            # Insert Baru
+            profile = DistrictProfile(
+                district_id=district_id,
+                luas_wilayah=payload.get("luas_wilayah"),
+                jumlah_penduduk=payload.get("jumlah_penduduk"),
+                deskripsi=payload.get("deskripsi"),
+                batas_wilayah=payload.get("batas_wilayah")
+            )
+            db.add(profile)
+        else:
+            # Update Eksisting
+            if "luas_wilayah" in payload:
+                profile.luas_wilayah = payload["luas_wilayah"]
+            if "jumlah_penduduk" in payload:
+                profile.jumlah_penduduk = payload["jumlah_penduduk"]
+            if "deskripsi" in payload:
+                profile.deskripsi = payload["deskripsi"]
+            if "batas_wilayah" in payload:
+                profile.batas_wilayah = payload["batas_wilayah"]
+
+        # 4. Finalisasi Transaksi
+        db.commit()
+        db.refresh(profile)
+        return profile
+
+    @staticmethod
+    def get_district_stats(db: Session, category_id: int = None, year: int = None) -> List[Dict[str, Any]]:
+        """
+        Melakukan komputasi agregasi total dataset per distrik.
+        
+        Logika Kritis:
+        Kita menggunakan OUTER JOIN dan eksekusi filter di dalam argumen COUNT (case expression).
+        Jika kita menggunakan `.filter(Dataset.category_id == X)` di level query utama, 
+        Outer Join akan berubah menjadi Inner Join secara otomatis di level SQL, 
+        sehingga distrik dengan 0 dataset akan hilang dari Payload Response.
+        """
+        
+        # 1. PERBAIKAN: WAJIB filter status approved agar data hantu tidak muncul di peta
+        dataset_filters = [Dataset.status == 'approved']
+        
+        if category_id is not None:
+            dataset_filters.append(Dataset.category_id == category_id)
+        if year is not None:
+            dataset_filters.append(Dataset.year == year)
+            
+        # 2. PERBAIKAN SYNTAX SQLALCHEMY 2.0: 
+        # Tanpa list [], langsung passing tuple posisional (condition, value)
+        aggregation_expr = func.count(
+            case(
+                (and_(*dataset_filters), Dataset.id), 
+                else_=None
+            )
+        ).label("total_data")
+
+        # 3. Eksekusi ORM Query menggunakan Left Outer Join
+        query_results = (
+            db.query(
+                District.name.label("district_name"),
+                aggregation_expr
+            )
+            .outerjoin(Dataset, District.id == Dataset.district_id)
+            .group_by(District.name)
+            .all()
+        )
+
+        # 4. Restrukturisasi hasil ke format Array of Objects
+        formatted_response = [
+            {
+                "district_name": row.district_name,
+                "total_dataset": row.total_data or 0
+            }
+            for row in query_results
+        ]
+
+        return formatted_response
+
+    @staticmethod
+    def get_detailed_district_stats(db: Session, category_id: int = None) -> Dict[str, Any]:
+        """
+        [Opsional/Ekspansi] Metode tambahan untuk menampilkan statistik multivariabel
+        Misal: Mengirimkan total baris (rows) atau rata-rata skor kualitas per distrik.
+        """
+        # PERBAIKAN: Cegah perhitungan data pending
+        filters = [Dataset.status == 'approved']
+        if category_id is not None:
+            filters.append(Dataset.category_id == category_id)
+
+        join_condition = and_(District.id == Dataset.district_id, *filters)
+
+        query_results = (
+            db.query(
+                District.name.label("district_name"),
+                func.count(Dataset.id).label("total_datasets"),
+                func.sum(Dataset.total_rows).label("total_rows"),
+                func.avg(Dataset.quality_score).label("avg_quality")
+            )
+            .outerjoin(Dataset, join_condition)
+            .group_by(District.name)
+            .all()
+        )
+
+        formatted_response = {}
+        for row in query_results:
+            formatted_response[row.district_name] = {
+                "total_datasets": row.total_datasets or 0,
+                "total_rows": row.total_rows or 0,
+                "avg_quality": round(row.avg_quality or 0.0, 2)
+            }
+            
+        return formatted_response
+
+    @staticmethod
+    def get_district_drilldown_stats(db: Session, district_id: int) -> Dict[str, Any]:
+        """
+        Engine untuk Pop-up Peta: Menarik Narasi Statis (Profile) dan 
+        Agregasi Kepadatan per Kategori (Dinamis).
+        """
+        # 1. Ambil Master Data & Profil Statis
+        district = db.query(District).filter(District.id == district_id).first()
+        if not district:
+            return None
+
+        # Fallback profile jika Bappeda belum mengisi data statisnya
+        profile_data = {
+            "luas_wilayah": None,
+            "jumlah_penduduk": None,
+            "deskripsi": "Data profil wilayah belum diatur oleh administrator.",
+            "batas_wilayah": None
+        }
+        
+        if district.profile:
+            profile_data = {
+                "luas_wilayah": district.profile.luas_wilayah,
+                "jumlah_penduduk": district.profile.jumlah_penduduk,
+                "deskripsi": district.profile.deskripsi,
+                "batas_wilayah": district.profile.batas_wilayah
+            }
+
+        # 2. Agregasi Total Dataset per Kategori secara on-the-fly
+        # PERBAIKAN: Tambahkan Dataset.status == 'approved' ke kondisi Join
+        category_stats = (
+            db.query(
+                Category.id.label("category_id"),
+                Category.name.label("name"),
+                func.count(Dataset.id).label("total")
+            )
+            .join(Dataset, and_(
+                Dataset.category_id == Category.id, 
+                Dataset.district_id == district_id,
+                Dataset.status == 'approved'
+            ))
+            .group_by(Category.id, Category.name)
+            .all()
+        )
+
+        categories_data = [
+            {
+                "category_id": row.category_id,
+                "name": row.name,
+                "total": row.total
+            }
+            for row in category_stats if row.total > 0 # Hanya tampilkan kategori yang ada datanya
+        ]
+
+        # 3. Strukturisasi Response O(1)
+        return {
+            "district_id": district.id,
+            "district_name": district.name,
+            "profile": profile_data,
+            "categories": categories_data
+        }
+
+--- FILE: copy_project.py ---
+import os
+from pathlib import Path    
+
+# --- KONFIGURASI ---
+TARGET_DIRECTORY = "C:\\Users\\ASUS\\Documents\\gthub\\mimika-datahub-be"
+OUTPUT_FILE = "C:\\Users\\ASUS\\Documents\\gthub\\mimika-datahub-be\\mimika-be.txt"
+
+# Tambahkan pengecualian direktori lintas ekosistem
+EXCLUDE_DIRS = {
+    "node_modules", ".git", "dist", "build", "__pycache__", ".vscode", ".idea", "venv",
+    ".next", ".nuxt", ".svelte-kit", ".angular", ".cache", ".parcel-cache", ".vite",
+    ".docusaurus", ".astro", ".storybook", ".turbo",
+    "coverage", ".nyc_output", "jspm_packages", "bower_components", "elm-stuff",
+    ".dart_tool", ".pub", ".pub-cache", "DerivedData", "android", "ios", "web/build",
+    "vendor", "storage", "public/build", "public/storage", "assets",
+    ".venv", "env", ".mypy_cache", ".pytest_cache", ".tox", ".nox",
+    "build", "dist",
+    ".gradle", ".mvn", "target", "out", ".settings", ".cxx",
+    "bin", "obj", ".vs", "packages",
+    "bin", "pkg", "vendor",
+    "target",
+    "Pods", "DerivedData",
+    ".bundle", "log", "tmp", "vendor/bundle", 
+    "dist-newstyle", "cmake-build-debug", "cmake-build-release", ".terraform",
+}
+
+# Tambahkan pengecualian file lintas ekosistem (nama persis)
+EXCLUDE_FILES = {
+    ".DS_Store", "package-lock.json", "yarn.lock", "Readme.md", "README.txt", "README.md",
+
+    # Lockfiles & manifest lain
+    "pnpm-lock.yaml", "bun.lockb", "composer.lock", "pubspec.lock",
+    "Gemfile.lock", "Pipfile.lock", "poetry.lock", "Cargo.lock",
+    "mix-manifest.json", "vite-manifest.json",
+
+    # Env (tanpa wildcard → tambahkan varian umum)
+    ".env.development", ".env.production", ".env.test", ".env.example",
+
+    # Tools/metadata umum
+    ".flutter-plugins", ".flutter-plugins-dependencies", ".packages",
+    ".phpunit.result.cache",
+
+    # Android/iOS/Xcode umpan balik build (file)
+    "Generated.xcconfig", "LocalProperties.kt",
+}
+
+# Opsional: Jika Anda HANYA ingin menyalin ekstensi tertentu, isi daftar ini.
+# Contoh: INCLUDE_EXTENSIONS = {".ts", ".tsx", ".css"}
+# Jika dibiarkan kosong, skrip akan menyalin SEMUA file teks yang ditemukan.
+INCLUDE_EXTENSIONS = {}
+
+def is_binary(file_path: Path) -> bool:
+    try:
+        with open(file_path, 'rb') as f:
+            return b'\x00' in f.read(512)
+    except Exception:
+        return True
+
+def main():
+    target_path = Path(TARGET_DIRECTORY)
+    if not target_path.is_dir():
+        print(f"Error: Folder '{TARGET_DIRECTORY}' tidak ditemukan.")
+        return
+
+    print(f"Memproses folder: {target_path.resolve()}")
+
+    files_to_process = []
+    for file_path in sorted(target_path.rglob("*")):
+        if any(part in EXCLUDE_DIRS for part in file_path.parts):
+            continue
+
+        if file_path.is_file() and file_path.name not in EXCLUDE_FILES:
+            if INCLUDE_EXTENSIONS and file_path.suffix not in INCLUDE_EXTENSIONS:
+                continue
+            if not is_binary(file_path):
+                files_to_process.append(file_path)
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        f.write("="*50 + "\n")
+        f.write("STRUKTUR FOLDER (DAFTAR FILE)\n")
+        f.write("="*50 + "\n")
+        if not files_to_process:
+            f.write("Tidak ada file yang ditemukan.\n")
+        else:
+            for file_path in files_to_process:
+                relative_path = file_path.relative_to(target_path.parent)
+                f.write(str(relative_path).replace("\\", "/"))
+                f.write("\n")
+        f.write("\n\n")
+
+        f.write("="*50 + "\n")
+        f.write("ISI KODE\n")
+        f.write("="*50 + "\n\n")
+        
+        for file_path in files_to_process:
+            try:
+                content = file_path.read_text("utf-8", errors="ignore")
+                relative_path = file_path.relative_to(target_path.parent)
+                
+                f.write(f"--- START FILE: {str(relative_path).replace(os.sep, '/')} ---\n")
+                f.write(content)
+                f.write(f"\n--- END FILE: {str(relative_path).replace(os.sep, '/')} ---\n\n")
+                print(f"-> Menyalin konten: {relative_path}")
+            except Exception as e:
+                print(f"-> Gagal membaca: {relative_path} ({e})")
+
+    print(f"\nProses selesai! Output disimpan di '{OUTPUT_FILE}'.")
+
+if __name__ == "__main__":
+    main()
+
+
+--- FILE: filter_project.py ---
+import os
+from pathlib import Path
+
+# --- KONFIGURASI ---
+# Sesuaikan TARGET_DIRECTORY ke path backend Python kamu
+TARGET_DIRECTORY = r"C:\Users\PC\Documents\Dev\mimika-datahub\mimika-datahub-be"
+OUTPUT_FILE = r"C:\Users\PC\Documents\Dev\mimika-datahub\mimika-datahub-be\mimika-be-hybrid.txt"
+
+# Folder yang BOLEH diambil (Whitelist)
+ALLOWED_DIRS = {"src", "app", "models", "controllers", "services", "utils"}
+# Folder yang HARAM hukumnya (Double-Lock)
+FORBIDDEN_DIRS = {"venv", ".venv", "env", "__pycache__", ".git", "dist", "build", ".pytest_cache"}
+
+# Ekstensi yang relevan untuk Python
+INCLUDE_EXTENSIONS = {".py", ".json", ".sql", ".yaml", ".ini"}
+
+def is_binary(file_path: Path) -> bool:
+    try:
+        with open(file_path, 'rb') as f:
+            return b'\x00' in f.read(512)
+    except Exception:
+        return True
+
+def main():
+    target_path = Path(TARGET_DIRECTORY)
+    if not target_path.is_dir():
+        print(f"Error: Folder '{TARGET_DIRECTORY}' tidak ditemukan.")
+        return
+
+    files_to_process = []
+    
+    print("Memproses backend Python (Hybrid Mode)...")
+    for file_path in target_path.rglob("*"):
+        # Double Lock: Pastikan tidak ada folder terlarang
+        if any(part in FORBIDDEN_DIRS for part in file_path.parts):
+            continue
+            
+        # Whitelist: Hanya ambil yang di ALLOWED_DIRS atau file root yang relevan (seperti main.py)
+        is_allowed = any(part in ALLOWED_DIRS for part in file_path.parts)
+        is_root_py = file_path.parent == target_path and file_path.suffix == ".py"
+        
+        if (is_allowed or is_root_py) and file_path.is_file():
+            if file_path.suffix in INCLUDE_EXTENSIONS:
+                if not is_binary(file_path):
+                    files_to_process.append(file_path)
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        f.write("=== BACKEND STRUCTURE & CODE (PYTHON) ===\n\n")
+        for file_path in sorted(files_to_process):
+            relative_path = file_path.relative_to(target_path)
+            try:
+                content = file_path.read_text("utf-8", errors="ignore")
+                f.write(f"\n--- FILE: {relative_path} ---\n")
+                f.write(content)
+                f.write("\n")
+                print(f"-> Menyalin: {relative_path}")
+            except Exception as e:
+                print(f"-> Gagal baca {relative_path}: {e}")
+
+    print(f"\nSelesai! Backend hybrid tersimpan di: {OUTPUT_FILE}")
+
+if __name__ == "__main__":
+    main()

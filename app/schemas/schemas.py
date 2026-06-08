@@ -1,4 +1,5 @@
-from pydantic import BaseModel
+# app/schemas/schemas.py
+from pydantic import BaseModel, field_validator
 from typing import List, Optional, Any, Dict
 from datetime import datetime
 
@@ -8,11 +9,11 @@ class DistrictProfileBase(BaseModel):
     jumlah_penduduk: Optional[int] = None
     deskripsi: Optional[str] = None
     batas_wilayah: Optional[str] = None
+    images: Optional[List[str]] = [] # [FIX] Mendukung array foto dengan default kosong
 
 class DistrictProfileCreate(DistrictProfileBase):
     district_id: int
 
-# FASE 1: Schema untuk validasi form input Admin saat mengupdate profil
 class DistrictProfileUpdate(DistrictProfileBase):
     pass
 
@@ -29,20 +30,15 @@ class DistrictCreate(DistrictBase):
 
 class DistrictOut(DistrictBase):
     id: int
-    profile: Optional[DistrictProfileOut] = None # Include statis info on demand
+    profile: Optional[DistrictProfileOut] = None 
     class Config:
         from_attributes = True
 
 class SpatialStatResponse(BaseModel):
-    """
-    Kontrak response untuk agregasi Peta GIS.
-    Menggunakan format yang memudahkan iterasi O(1) atau mapping di frontend.
-    """
     district_name: str
     total_dataset: int
     total_rows: Optional[int] = None
     avg_quality: Optional[float] = None
-
 
 # --- CATEGORY SCHEMAS ---
 class CategoryCreate(BaseModel):
@@ -83,7 +79,7 @@ class DatasetCreate(BaseModel):
     source_id: int
     category_id: int
     source_type_id: int
-    district_id: Optional[int] = None # Ditambahkan untuk relasi GIS
+    district_id: Optional[int] = None 
     year: int
     period: str
     dataset_type: str
@@ -99,7 +95,7 @@ class DatasetOut(DatasetCreate):
     created_at: datetime
     category: CategoryOut
     sourceType: SourceTypeOut
-    district: Optional[DistrictOut] = None # Ditambahkan untuk output detail dataset
+    district: Optional[DistrictOut] = None 
     class Config:
         from_attributes = True
 
@@ -111,7 +107,6 @@ class Stats(BaseModel):
     empty_cells: int
     total: int
     quality_score: float
-
 
 class UploadResponse(BaseModel):
     status: str
@@ -138,7 +133,7 @@ class UserBase(BaseModel):
     username: str
     email: str
     full_name: str
-    role: str = "user" # 'admin' atau 'user'
+    role: str = "user" 
     is_active: bool = True
 
 class UserCreate(UserBase):
@@ -147,7 +142,7 @@ class UserCreate(UserBase):
 class UserUpdate(BaseModel):
     email: Optional[str] = None
     full_name: Optional[str] = None
-    password: Optional[str] = None # Opsional, diisi jika ingin ganti password
+    password: Optional[str] = None 
     role: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -161,8 +156,8 @@ class OPDMonitoringDetail(BaseModel):
     user_id: int
     opd_name: str
     last_submit: Optional[datetime] = None
-    status: str # 'Lengkap', 'Kurang', 'Belum Kirim'
-    progress: str # 'n/12'
+    status: str 
+    progress: str 
     upload_count: int
     avg_quality: float
     email: Optional[str]
@@ -189,34 +184,93 @@ class DatasetRecentOut(BaseModel):
     id: int
     title: str
     image_url: Optional[str]
-    template_url: Optional[str] # Diambil dari relasi kategori
+    template_url: Optional[str] 
     category_name: str
     source_name: str
     created_at: datetime
-
     class Config:
         from_attributes = True
 
-        # --- ATLAS / SCROLLYTELLING SCHEMAS ---
-
+# --- ATLAS / SCROLLYTELLING SCHEMAS ---
 class AtlasMetadata(BaseModel):
-    """Skema metadata untuk memberikan konteks naratif pada setiap indikator atlas."""
     title: str
     unit: str
     description: str
-    color_scheme: str # Contoh: 'Reds', 'Blues', 'Greens'
+    color_scheme: str 
 
 class AtlasIndicatorResponse(BaseModel):
-    """
-    DTO Utama untuk Atlas. 
-    Memisahkan antara identitas indikator, metadata narasi, 
-    dan data spasial yang dipetakan langsung ke key distrik (O(1) mapping).
-    """
     indicator: str
     metadata: AtlasMetadata
-    data: Dict[str, float] # Format: {"mimikabaru": 12.5, "wania": 15.0, ...}
+    data: Dict[str, float] 
 
 class AtlasIndicatorMetaBrief(BaseModel):
-    """Skema ringkas untuk list metadata indikator (pilihan menu/sidebar)."""
     key: str
     metadata: AtlasMetadata
+
+# ============================================================================
+# [NEW] ASSET / GEOTAGGING SCHEMAS
+# ============================================================================
+
+class AssetCategoryBase(BaseModel):
+    name: str
+    icon_url: Optional[str] = None
+    color: Optional[str] = "#0071bc"
+
+class AssetCategoryCreate(AssetCategoryBase):
+    pass
+
+class AssetCategoryOut(AssetCategoryBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class AssetBase(BaseModel):
+    name: str
+    source_id: int
+    category_id: int
+    district_id: Optional[int] = None
+    lat: float
+    lng: float
+    description: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+
+class AssetCreate(AssetBase):
+    """
+    Skema untuk validasi input sebelum membuat aset.
+    Sengaja tidak memuat user_id dan images karena akan ditangani internal via Controller di API.
+    """
+    pass
+
+class AssetUpdate(BaseModel):
+    name: Optional[str] = None
+    category_id: Optional[int] = None
+    district_id: Optional[int] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    description: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+    status: Optional[str] = None # Admin berhak memperbarui status moderasi
+
+class AssetOut(AssetBase):
+    """Skema balikan API (Response DTO)"""
+    id: int
+    user_id: int
+    status: str
+    image_url: Optional[str] = None
+    images: Optional[List[str]] = [] # [FIX DARI QA] Menjamin properti images selalu return array (walau kosong)
+    created_at: datetime
+    
+    category: AssetCategoryOut 
+    owner: Optional[SourceOut] = None
+    district: Optional[DistrictOut] = None
+    
+    # [FIX DARI QA] Interceptor untuk memanipulasi data NULL dari SQLAlchemy
+    @field_validator('status', mode='before')
+    @classmethod
+    def default_status(cls, v):
+        if v is None:
+            return "pending"
+        return v
+    
+    class Config:
+        from_attributes = True

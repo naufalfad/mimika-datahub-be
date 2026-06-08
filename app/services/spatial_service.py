@@ -1,6 +1,7 @@
+# app/services/spatial_service.py
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, case
-from app.models.models import District, Dataset, Category, DistrictProfile
+from sqlalchemy import func, and_, case, cast, Float
+from app.models.models import District, Dataset, Category, DistrictProfile, SpatialCache, DataRow
 from typing import Dict, Any, List
 
 class SpatialService:
@@ -16,17 +17,13 @@ class SpatialService:
         Jika relasi profil untuk distrik ini belum ada, buat baru.
         Jika sudah ada, timpa dengan data payload dari form Admin.
         """
-        # 1. Validasi eksistensi Master District
         district = db.query(District).filter(District.id == district_id).first()
         if not district:
             raise ValueError(f"Distrik dengan ID {district_id} tidak ditemukan.")
 
-        # 2. Ambil profil eksisting
         profile = db.query(DistrictProfile).filter(DistrictProfile.district_id == district_id).first()
 
-        # 3. Logika Upsert
         if not profile:
-            # Insert Baru
             profile = DistrictProfile(
                 district_id=district_id,
                 luas_wilayah=payload.get("luas_wilayah"),
@@ -36,7 +33,6 @@ class SpatialService:
             )
             db.add(profile)
         else:
-            # Update Eksisting
             if "luas_wilayah" in payload:
                 profile.luas_wilayah = payload["luas_wilayah"]
             if "jumlah_penduduk" in payload:
@@ -46,7 +42,6 @@ class SpatialService:
             if "batas_wilayah" in payload:
                 profile.batas_wilayah = payload["batas_wilayah"]
 
-        # 4. Finalisasi Transaksi
         db.commit()
         db.refresh(profile)
         return profile
@@ -55,15 +50,8 @@ class SpatialService:
     def get_district_stats(db: Session, category_id: int = None, year: int = None) -> List[Dict[str, Any]]:
         """
         Melakukan komputasi agregasi total dataset per distrik.
-        
-        Logika Kritis:
-        Kita menggunakan OUTER JOIN dan eksekusi filter di dalam argumen COUNT (case expression).
-        Jika kita menggunakan `.filter(Dataset.category_id == X)` di level query utama, 
-        Outer Join akan berubah menjadi Inner Join secara otomatis di level SQL, 
-        sehingga distrik dengan 0 dataset akan hilang dari Payload Response.
+        Menggunakan OUTER JOIN agar distrik dengan 0 dataset tetap ter-render di peta.
         """
-        
-        # 1. PERBAIKAN: WAJIB filter status approved agar data hantu tidak muncul di peta
         dataset_filters = [Dataset.status == 'approved']
         
         if category_id is not None:
@@ -71,8 +59,6 @@ class SpatialService:
         if year is not None:
             dataset_filters.append(Dataset.year == year)
             
-        # 2. PERBAIKAN SYNTAX SQLALCHEMY 2.0: 
-        # Tanpa list [], langsung passing tuple posisional (condition, value)
         aggregation_expr = func.count(
             case(
                 (and_(*dataset_filters), Dataset.id), 
@@ -80,7 +66,6 @@ class SpatialService:
             )
         ).label("total_data")
 
-        # 3. Eksekusi ORM Query menggunakan Left Outer Join
         query_results = (
             db.query(
                 District.name.label("district_name"),
@@ -91,7 +76,6 @@ class SpatialService:
             .all()
         )
 
-        # 4. Restrukturisasi hasil ke format Array of Objects
         formatted_response = [
             {
                 "district_name": row.district_name,
@@ -105,10 +89,8 @@ class SpatialService:
     @staticmethod
     def get_detailed_district_stats(db: Session, category_id: int = None) -> Dict[str, Any]:
         """
-        [Opsional/Ekspansi] Metode tambahan untuk menampilkan statistik multivariabel
-        Misal: Mengirimkan total baris (rows) atau rata-rata skor kualitas per distrik.
+        Endpoint ekspansi spasial untuk Tooltip Interaktif di peta.
         """
-        # PERBAIKAN: Cegah perhitungan data pending
         filters = [Dataset.status == 'approved']
         if category_id is not None:
             filters.append(Dataset.category_id == category_id)
@@ -143,17 +125,16 @@ class SpatialService:
         Engine untuk Pop-up Peta: Menarik Narasi Statis (Profile) dan 
         Agregasi Kepadatan per Kategori (Dinamis).
         """
-        # 1. Ambil Master Data & Profil Statis
         district = db.query(District).filter(District.id == district_id).first()
         if not district:
             return None
 
-        # Fallback profile jika Bappeda belum mengisi data statisnya
         profile_data = {
             "luas_wilayah": None,
             "jumlah_penduduk": None,
             "deskripsi": "Data profil wilayah belum diatur oleh administrator.",
-            "batas_wilayah": None
+            "batas_wilayah": None,
+            "images": [] # Pastikan mengembalikan array kosong jika belum ada gambar
         }
         
         if district.profile:
@@ -161,11 +142,10 @@ class SpatialService:
                 "luas_wilayah": district.profile.luas_wilayah,
                 "jumlah_penduduk": district.profile.jumlah_penduduk,
                 "deskripsi": district.profile.deskripsi,
-                "batas_wilayah": district.profile.batas_wilayah
+                "batas_wilayah": district.profile.batas_wilayah,
+                "images": district.profile.images or []
             }
 
-        # 2. Agregasi Total Dataset per Kategori secara on-the-fly
-        # PERBAIKAN: Tambahkan Dataset.status == 'approved' ke kondisi Join
         category_stats = (
             db.query(
                 Category.id.label("category_id"),
@@ -187,13 +167,87 @@ class SpatialService:
                 "name": row.name,
                 "total": row.total
             }
-            for row in category_stats if row.total > 0 # Hanya tampilkan kategori yang ada datanya
+            for row in category_stats if row.total > 0
         ]
 
-        # 3. Strukturisasi Response O(1)
         return {
             "district_id": district.id,
             "district_name": district.name,
             "profile": profile_data,
             "categories": categories_data
         }
+
+    # ============================================================================
+    # [REFACTOR] FASE 3: CHOROPLETH ENGINE MENGGUNAKAN REDIS/DB CACHING
+    # ============================================================================
+    
+    @staticmethod
+    def get_indicator_data(db: Session, indicator_key: str) -> Dict[str, float]:
+        """
+        [PROTECTED VARIATIONS] Membaca data aggregasi dari tabel Cache, 
+        BUKAN melakukan parsing JSON secara langsung (O(1) Access Time).
+        Sangat krusial untuk performa Choropleth di WebGIS Publik.
+        """
+        cached_results = (
+            db.query(SpatialCache, District.name.label("district_name"))
+            .join(District, District.id == SpatialCache.district_id)
+            .filter(SpatialCache.indicator_key == indicator_key)
+            .all()
+        )
+
+        formatted_data = {}
+        for row, district_name in cached_results:
+            clean_key = district_name.lower().replace(" ", "")
+            formatted_data[clean_key] = round(row.value, 2) if row.value else 0
+
+        return formatted_data
+
+    @staticmethod
+    def calculate_and_cache_aggregation(db: Session, indicator_key: str):
+        """
+        [BACKGROUND TASK ENGINE] Menghitung agregasi rata-rata nilai dari kolom JSON 
+        di tabel DataRow, kemudian menyimpannya/menimpanya ke tabel SpatialCache.
+        Fungsi ini harus dipicu (Triggered) oleh Event (contoh: Saat Dataset di-Approve Admin).
+        """
+        print(f"[Engine] Memulai kalkulasi agregasi spasial untuk indikator: {indicator_key}...")
+        
+        # 1. Eksekusi Heavy Query (Parsing JSONB ke Float)
+        query = (
+            db.query(
+                District.id.label("district_id"),
+                func.avg(
+                    cast(
+                        DataRow.content[indicator_key].astext,
+                        Float
+                    )
+                ).label("average_value")
+            )
+            .join(Dataset, Dataset.id == DataRow.dataset_id)
+            .join(District, District.id == Dataset.district_id)
+            .filter(Dataset.status == "approved")
+            .filter(DataRow.content[indicator_key].astext.isnot(None))
+            .group_by(District.id)
+        )
+
+        results = query.all()
+
+        # 2. Hapus Cache Lama untuk Indikator ini (Clear & Rebuild)
+        db.query(SpatialCache).filter(SpatialCache.indicator_key == indicator_key).delete()
+        db.commit()
+
+        # 3. Simpan Hasil Perhitungan ke Tabel Cache
+        caches_to_insert = []
+        for row in results:
+            if row.average_value is not None:
+                new_cache = SpatialCache(
+                    indicator_key=indicator_key,
+                    district_id=row.district_id,
+                    value=row.average_value
+                )
+                caches_to_insert.append(new_cache)
+                
+        if caches_to_insert:
+            db.bulk_save_objects(caches_to_insert)
+            db.commit()
+            
+        print(f"[Engine] Kalkulasi selesai. {len(caches_to_insert)} baris cache disimpan.")
