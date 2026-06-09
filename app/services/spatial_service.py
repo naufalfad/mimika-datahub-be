@@ -51,10 +51,14 @@ class SpatialService:
         return profile
 
     @staticmethod
-    def get_district_stats(db: Session, category_id: int = None, year: int = None) -> List[Dict[str, Any]]:
+    def get_district_stats(db: Session, category_id: int = None, year: int = None) -> Dict[str, Any]:
         """
+        [OPTIMALISASI KARTOGRAFI]
         Melakukan komputasi agregasi total dataset per distrik.
         Menggunakan OUTER JOIN agar distrik dengan 0 dataset tetap ter-render di peta.
+        
+        Mengekstrak nilai minimum dan maksimum dari data sebaran secara real-time
+        untuk mendukung visualisasi legenda dinamis (Continuous Anchoring).
         """
         dataset_filters = [Dataset.status == 'approved']
         
@@ -80,6 +84,7 @@ class SpatialService:
             .all()
         )
 
+        # 1. Bentuk data spasial
         formatted_response = [
             {
                 "district_name": row.district_name,
@@ -88,7 +93,17 @@ class SpatialService:
             for row in query_results
         ]
 
-        return formatted_response
+        # 2. Kalkulasi nilai minimum dan maksimum di memori (Sangat efisien karena N=18 distrik)
+        totals = [item["total_dataset"] for item in formatted_response]
+        min_value = min(totals) if totals else 0
+        max_value = max(totals) if totals else 0
+
+        # 3. Paketkan data ke dalam struktur Wrapper baru
+        return {
+            "min_value": min_value,
+            "max_value": max_value,
+            "data": formatted_response
+        }
 
     @staticmethod
     def get_detailed_district_stats(db: Session, category_id: int = None) -> Dict[str, Any]:
@@ -186,11 +201,15 @@ class SpatialService:
     # ============================================================================
     
     @staticmethod
-    def get_indicator_data(db: Session, indicator_key: str) -> Dict[str, float]:
+    def get_indicator_data(db: Session, indicator_key: str) -> Dict[str, Any]:
         """
         [PROTECTED VARIATIONS] Membaca data aggregasi dari tabel Cache, 
         BUKAN melakukan parsing JSON secara langsung (O(1) Access Time).
         Sangat krusial untuk performa Choropleth di WebGIS Publik.
+
+        [OPTIMALISASI KARTOGRAFI]
+        Mengekstrak nilai minimum dan maksimum dari data spasial atlas yang aktif 
+        secara dinamis untuk mencegah kebingungan gradasi warna bagi publik.
         """
         cached_results = (
             db.query(SpatialCache, District.name.label("district_name"))
@@ -199,12 +218,26 @@ class SpatialService:
             .all()
         )
 
+        # 1. Bentuk data spasial terformat
         formatted_data = {}
+        values_list = []
+        
         for row, district_name in cached_results:
             clean_key = district_name.lower().replace(" ", "")
-            formatted_data[clean_key] = round(row.value, 2) if row.value else 0
+            val = round(row.value, 2) if row.value else 0.0
+            formatted_data[clean_key] = val
+            values_list.append(val)
 
-        return formatted_data
+        # 2. Ambil nilai ekstrem riil
+        min_value = min(values_list) if values_list else 0.0
+        max_value = max(values_list) if values_list else 0.0
+
+        # 3. Kembalikan dengan struktur pembungkus baru
+        return {
+            "min_value": min_value,
+            "max_value": max_value,
+            "data": formatted_data
+        }
 
     @staticmethod
     def calculate_and_cache_aggregation(db: Session, indicator_key: str):

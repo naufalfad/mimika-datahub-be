@@ -1,3 +1,4 @@
+# app/api/endpoints/atlas.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
@@ -21,8 +22,9 @@ def list_available_indicators(db: Session = Depends(get_db)):
 def get_atlas_data(indicator_type: str, db: Session = Depends(get_db)):
     """
     Endpoint utama untuk Atlas Scrollytelling:
-    Mengembalikan metadata indikator dan data spasial per distrik 
-    untuk di-render menjadi peta Choropleth.
+    Mengembalikan metadata indikator (termasuk properti "direction" / arah data) 
+    dan data spasial per distrik yang didekorasi dengan nilai ekstrem min/max 
+    secara dinamis untuk rendering peta Choropleth bebas ambigu.
     """
     
     # 1. Ambil data agregat spasial (ID Distrik -> Nilai)
@@ -35,13 +37,20 @@ def get_atlas_data(indicator_type: str, db: Session = Depends(get_db)):
             detail=f"Indikator '{indicator_type}' tidak ditemukan atau belum memiliki data yang valid."
         )
     
-    # 2. Ambil metadata (Judul, Satuan, Deskripsi, Warna)
+    # 2. Ambil metadata (Judul, Satuan, Deskripsi, Warna, Arah Data/Direction)
     metadata = AtlasService.get_indicator_metadata(indicator_type)
     
-    # 3. Kembalikan response terpadu
+    # 3. Hitung nilai ekstrem dinamis untuk memandu jangkar legenda di frontend
+    data_values = list(spatial_data.values())
+    min_value = min(data_values) if data_values else 0.0
+    max_value = max(data_values) if data_values else 0.0
+    
+    # 4. Kembalikan response terpadu dengan dekorator ekstrem nilai
     return {
         "indicator": indicator_type,
         "metadata": metadata,
+        "min_value": min_value,
+        "max_value": max_value,
         "data": spatial_data
     }
 

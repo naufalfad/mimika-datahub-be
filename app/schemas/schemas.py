@@ -40,6 +40,12 @@ class SpatialStatResponse(BaseModel):
     total_rows: Optional[int] = None
     avg_quality: Optional[float] = None
 
+# [REFACTOR] Skema pembungkus legibilitas dinamis untuk respon peta spasial [2]
+class SpatialStatsWrapper(BaseModel):
+    min_value: float
+    max_value: float
+    data: List[SpatialStatResponse]
+
 # --- CATEGORY SCHEMAS ---
 class CategoryCreate(BaseModel):
     name: str
@@ -203,10 +209,13 @@ class AtlasMetadata(BaseModel):
     unit: str
     description: str
     color_scheme: str 
+    direction: str  # [REFACTOR] Properti arah indikator (Makin Tinggi = Makin Baik / Kritis) [3]
 
 class AtlasIndicatorResponse(BaseModel):
     indicator: str
     metadata: AtlasMetadata
+    min_value: float  # [REFACTOR] Jangkar dinamis batas bawah legenda atlas [2]
+    max_value: float  # [REFACTOR] Jangkar dinamis batas atas legenda atlas [2]
     data: Dict[str, float] 
 
 class AtlasIndicatorMetaBrief(BaseModel):

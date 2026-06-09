@@ -1,3 +1,4 @@
+# app/services/atlas_service.py
 from sqlalchemy.orm import Session
 from sqlalchemy import func, cast, Float, desc
 from app.models import models
@@ -69,33 +70,63 @@ class AtlasService:
     @staticmethod
     def get_indicator_metadata(indicator_key: str):
         """
-        Pure Fabrication: Memberikan metadata tambahan seperti satuan atau narasi
-        berdasarkan key indikator yang diminta.
+        [PURE FABRICATION ENGINE]
+        Memberikan metadata tambahan seperti satuan, narasi, skema warna,
+        dan arah evaluasi data (direction) berdasarkan key indikator yang diminta.
         """
+        indicator_key_lower = indicator_key.lower().strip()
+        
+        # 1. Registrasi Metadata Statis untuk Indikator Utama Bappeda
         metadata_map = {
             "stunting": {
                 "title": "Prevalensi Stunting",
                 "unit": "%",
                 "description": "Persentase balita yang mengalami gangguan pertumbuhan (stunting) berdasarkan standar WHO.",
-                "color_scheme": "Reds" 
+                "color_scheme": "Reds",
+                "direction": "negative"  # <--- MAKIN TINGGI PERSENTASE = MAKIN BURUK (KRITIS) [3]
             },
             "jumlah_penduduk": {
                 "title": "Kepadatan Penduduk",
                 "unit": "Jiwa",
                 "description": "Total populasi penduduk yang menetap di wilayah distrik terkait.",
-                "color_scheme": "Blues" 
+                "color_scheme": "Blues",
+                "direction": "positive"  # <--- MAKIN TINGGI JUMLAH = MAKIN MEMADAI (NORMAL) [3]
             },
             "pdrb": {
                 "title": "Produk Domestik Regional Bruto",
                 "unit": "Miliar Rp",
                 "description": "Nilai tambah bruto yang timbul dari seluruh sektor ekonomi di distrik tersebut.",
-                "color_scheme": "Greens" 
+                "color_scheme": "Greens",
+                "direction": "positive"  # <--- MAKIN TINGGI NILAI EKONOMI = MAKIN MAJU (NORMAL) [3]
             }
         }
         
-        return metadata_map.get(indicator_key.lower(), {
+        # Jika kunci indikator terdaftar secara statis, kembalikan metadatanya langsung
+        if indicator_key_lower in metadata_map:
+            return metadata_map[indicator_key_lower]
+            
+        # 2. [PROTECTED VARIATIONS] Smart Fallback Engine:
+        # Jika OPD mengunggah dataset tak terdaftar, tebak arah indikator secara cerdas
+        # berdasarkan kecocokan semantik pola kata kunci negatif.
+        negative_patterns = [
+            r"stunting", r"miskin", r"kemiskinan", r"pengangguran", r"buruk", 
+            r"sakit", r"mati", r"kematian", r"rusak", r"putus_sekolah", 
+            r"lumpuh", r"kurang_gizi", r"gizi_buruk", r"kriminal"
+        ]
+        
+        guessed_direction = "positive"
+        for pattern in negative_patterns:
+            if re.search(pattern, indicator_key_lower):
+                guessed_direction = "negative"
+                break
+                
+        # Menentukan visualisasi skema warna default berdasarkan arah perbandingan data
+        default_color = "Reds" if guessed_direction == "negative" else "Blues"
+        
+        return {
             "title": indicator_key.replace("_", " ").title(),
             "unit": "-",
             "description": "Indikator pembangunan sektoral Kabupaten Mimika.",
-            "color_scheme": "Blues"
-        })
+            "color_scheme": default_color,
+            "direction": guessed_direction  # [3]
+        }

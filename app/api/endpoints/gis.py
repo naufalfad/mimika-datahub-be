@@ -11,7 +11,7 @@ from app.api.deps import get_current_user
 
 router = APIRouter()
 
-@router.get("/stats", response_model=List[schemas.SpatialStatResponse])
+@router.get("/stats", response_model=schemas.SpatialStatsWrapper)
 def get_gis_statistics(
     category_id: Optional[int] = Query(None, description="Filter berdasarkan ID Kategori untuk pemetaan sektoral"),
     year: Optional[int] = Query(None, description="Filter berdasarkan Tahun rilis dataset"),
@@ -19,7 +19,8 @@ def get_gis_statistics(
 ):
     """
     Endpoint agregasi spasial (GIS).
-    Mengembalikan array dictionary dengan kompleksitas O(1) untuk rendering peta GeoJSON di frontend.
+    Mengembalikan dictionary wrapper berisi min_value, max_value, dan array data 
+    untuk kebutuhan inisialisasi legenda jangkar dinamis (Continuous Anchoring) di frontend.
     Telah diarsiteki dengan Left Outer Join untuk menjamin 18 Distrik selalu dirender.
     """
     # Mendelegasikan logika kalkulasi murni ke layer Service (Pure Fabrication)

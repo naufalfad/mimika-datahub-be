@@ -1549,6 +1549,7 @@ def get_sidebar_stats(dataset_type: str = "pemerintah", db: Session = Depends(ge
     }
 
 --- FILE: app\api\endpoints\gis.py ---
+# app/api/endpoints/gis.py
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
@@ -1628,6 +1629,7 @@ def update_district_profile(
     """
     Endpoint untuk Upsert (Update/Insert) Profil Wilayah.
     Hanya dapat dieksekusi oleh Administrator sistem.
+    Mendukung pengiriman data foto wilayah (images) secara mutlak dari Pydantic payload [1].
     """
     # 1. Otorisasi Ketat
     if current_user.role != "admin":
@@ -1639,6 +1641,7 @@ def update_district_profile(
     # 2. Eksekusi Service
     try:
         # exclude_unset=True memastikan bahwa kita hanya meng-update kolom yang benar-benar dikirim dari Frontend.
+        # Payload ini menyertakan 'images' (list string) yang siap dievaluasi oleh service layer [1].
         profile = SpatialService.update_district_profile(
             db=db, 
             district_id=district_id, 
@@ -1819,6 +1822,7 @@ def list_sources(db: Session = Depends(get_db)):
     return db.query(models.Source).all()
 
 --- FILE: app\api\endpoints\users.py ---
+# app/api/endpoints/users.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -1837,20 +1841,30 @@ def create_user(
     db: Session = Depends(get_db),
     admin: models.User = Depends(deps.get_admin_user) # Proteksi Admin
 ):
-    # Cek apakah username/email sudah ada
+    # A. Cek apakah username/email sudah ada
     user = db.query(models.User).filter(
         (models.User.username == user_in.username) | (models.User.email == user_in.email)
     ).first()
     if user:
         raise HTTPException(status_code=400, detail="Username atau Email sudah terdaftar")
     
+    # B. Integritas Data: Validasi apakah ID OPD/Source benar-benar eksis di DB [1]
+    if user_in.source_id is not None:
+        source_exists = db.query(models.Source).filter(models.Source.id == user_in.source_id).first()
+        if not source_exists:
+            raise HTTPException(
+                status_code=400, 
+                detail="ID Instansi (OPD) tidak valid atau tidak terdaftar di sistem master."
+            )
+
     new_user = models.User(
         username=user_in.username,
         email=user_in.email,
         full_name=user_in.full_name,
         role=user_in.role,
         hashed_password=security.get_password_hash(user_in.password), # Hash password
-        is_active=user_in.is_active
+        is_active=user_in.is_active,
+        source_id=user_in.source_id # [1] Menyimpan referensi instansi OPD yang sah
     )
     db.add(new_user)
     db.commit()
@@ -1889,6 +1903,15 @@ def update_user(
     if not db_user:
         raise HTTPException(status_code=404, detail="User tidak ditemukan")
     
+    # Validasi integritas ID OPD baru jika dikirimkan di payload [1]
+    if user_in.source_id is not None:
+        source_exists = db.query(models.Source).filter(models.Source.id == user_in.source_id).first()
+        if not source_exists:
+            raise HTTPException(
+                status_code=400, 
+                detail="ID Instansi (OPD) baru tidak valid atau tidak terdaftar."
+            )
+
     update_data = user_in.dict(exclude_unset=True)
     
     # Jika admin mengupdate password
@@ -1896,7 +1919,7 @@ def update_user(
         db_user.hashed_password = security.get_password_hash(update_data["password"])
         del update_data["password"]
     
-    # Update field lainnya secara dinamis
+    # Update field lainnya secara dinamis (termasuk source_id jika diubah) [1]
     for field, value in update_data.items():
         setattr(db_user, field, value)
     
@@ -2256,6 +2279,7 @@ class SurveyResponse(Base):
     survey = relationship("Survey", back_populates="responses")
 
 class User(Base):
+    """Tabel Data Pengguna & Akun Autentikasi"""
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True, nullable=False)
@@ -2265,6 +2289,11 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     is_active = Column(Boolean, default=True)
 
+    # [INTEGRASI OPD-USER BINDING] Menghubungkan secara eksplisit ke tabel Master OPD [1]
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=True) # [1]
+
+    # Relasi
+    source = relationship("Source")
     # [FASE 1] Relasi ke aset untuk melacak uploader (Creator Pattern)
     assets = relationship("Asset", back_populates="uploader")
 
@@ -2467,6 +2496,9 @@ class UserBase(BaseModel):
     full_name: str
     role: str = "user" 
     is_active: bool = True
+    
+    # [INTEGRASI OPD-USER BINDING] Menambahkan referensi instansi ke properti user dasar [1]
+    source_id: Optional[int] = None # [1]
 
 class UserCreate(UserBase):
     password: str
@@ -2477,6 +2509,9 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None 
     role: Optional[str] = None
     is_active: Optional[bool] = None
+    
+    # [INTEGRASI OPD-USER BINDING] Mendukung update parameter instansi di halaman Manajemen Akun [1]
+    source_id: Optional[int] = None # [1]
 
 class UserOut(UserBase):
     id: int
@@ -3367,6 +3402,7 @@ class SpatialService:
         [Fase 1] Engine Upsert (Update/Insert) untuk Manajemen Profil Wilayah.
         Jika relasi profil untuk distrik ini belum ada, buat baru.
         Jika sudah ada, timpa dengan data payload dari form Admin.
+        Mendukung pemrosesan data list foto wilayah (images) secara dinamis [1].
         """
         district = db.query(District).filter(District.id == district_id).first()
         if not district:
@@ -3380,7 +3416,8 @@ class SpatialService:
                 luas_wilayah=payload.get("luas_wilayah"),
                 jumlah_penduduk=payload.get("jumlah_penduduk"),
                 deskripsi=payload.get("deskripsi"),
-                batas_wilayah=payload.get("batas_wilayah")
+                batas_wilayah=payload.get("batas_wilayah"),
+                images=payload.get("images")  # [1] Menyimpan array URL foto wilayah baru
             )
             db.add(profile)
         else:
@@ -3392,6 +3429,8 @@ class SpatialService:
                 profile.deskripsi = payload["deskripsi"]
             if "batas_wilayah" in payload:
                 profile.batas_wilayah = payload["batas_wilayah"]
+            if "images" in payload:
+                profile.images = payload["images"]  # [1] Memperbarui array URL foto wilayah
 
         db.commit()
         db.refresh(profile)
