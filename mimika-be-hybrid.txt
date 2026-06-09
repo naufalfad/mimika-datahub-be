@@ -304,6 +304,7 @@ def get_public_assets(db: Session = Depends(get_db)):
     return grouped_assets
 
 --- FILE: app\api\endpoints\atlas.py ---
+# app/api/endpoints/atlas.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
@@ -327,8 +328,9 @@ def list_available_indicators(db: Session = Depends(get_db)):
 def get_atlas_data(indicator_type: str, db: Session = Depends(get_db)):
     """
     Endpoint utama untuk Atlas Scrollytelling:
-    Mengembalikan metadata indikator dan data spasial per distrik 
-    untuk di-render menjadi peta Choropleth.
+    Mengembalikan metadata indikator (termasuk properti "direction" / arah data) 
+    dan data spasial per distrik yang didekorasi dengan nilai ekstrem min/max 
+    secara dinamis untuk rendering peta Choropleth bebas ambigu.
     """
     
     # 1. Ambil data agregat spasial (ID Distrik -> Nilai)
@@ -341,13 +343,20 @@ def get_atlas_data(indicator_type: str, db: Session = Depends(get_db)):
             detail=f"Indikator '{indicator_type}' tidak ditemukan atau belum memiliki data yang valid."
         )
     
-    # 2. Ambil metadata (Judul, Satuan, Deskripsi, Warna)
+    # 2. Ambil metadata (Judul, Satuan, Deskripsi, Warna, Arah Data/Direction)
     metadata = AtlasService.get_indicator_metadata(indicator_type)
     
-    # 3. Kembalikan response terpadu
+    # 3. Hitung nilai ekstrem dinamis untuk memandu jangkar legenda di frontend
+    data_values = list(spatial_data.values())
+    min_value = min(data_values) if data_values else 0.0
+    max_value = max(data_values) if data_values else 0.0
+    
+    # 4. Kembalikan response terpadu dengan dekorator ekstrem nilai
     return {
         "indicator": indicator_type,
         "metadata": metadata,
+        "min_value": min_value,
+        "max_value": max_value,
         "data": spatial_data
     }
 
@@ -1562,7 +1571,7 @@ from app.api.deps import get_current_user
 
 router = APIRouter()
 
-@router.get("/stats", response_model=List[schemas.SpatialStatResponse])
+@router.get("/stats", response_model=schemas.SpatialStatsWrapper)
 def get_gis_statistics(
     category_id: Optional[int] = Query(None, description="Filter berdasarkan ID Kategori untuk pemetaan sektoral"),
     year: Optional[int] = Query(None, description="Filter berdasarkan Tahun rilis dataset"),
@@ -1570,7 +1579,8 @@ def get_gis_statistics(
 ):
     """
     Endpoint agregasi spasial (GIS).
-    Mengembalikan array dictionary dengan kompleksitas O(1) untuk rendering peta GeoJSON di frontend.
+    Mengembalikan dictionary wrapper berisi min_value, max_value, dan array data 
+    untuk kebutuhan inisialisasi legenda jangkar dinamis (Continuous Anchoring) di frontend.
     Telah diarsiteki dengan Left Outer Join untuk menjamin 18 Distrik selalu dirender.
     """
     # Mendelegasikan logika kalkulasi murni ke layer Service (Pure Fabrication)
@@ -2066,6 +2076,21 @@ from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
 
+--- FILE: app\db\seeders\__init__.py ---
+
+
+--- FILE: app\db\seeders\aset.py ---
+
+
+--- FILE: app\db\seeders\dataset.py ---
+
+
+--- FILE: app\db\seeders\users.py ---
+        
+
+--- FILE: app\db\seeders\wilayah.py ---
+
+
 --- FILE: app\db\session.py ---
 import os
 from dotenv import load_dotenv
@@ -2401,6 +2426,12 @@ class SpatialStatResponse(BaseModel):
     total_rows: Optional[int] = None
     avg_quality: Optional[float] = None
 
+# [REFACTOR] Skema pembungkus legibilitas dinamis untuk respon peta spasial [2]
+class SpatialStatsWrapper(BaseModel):
+    min_value: float
+    max_value: float
+    data: List[SpatialStatResponse]
+
 # --- CATEGORY SCHEMAS ---
 class CategoryCreate(BaseModel):
     name: str
@@ -2564,10 +2595,13 @@ class AtlasMetadata(BaseModel):
     unit: str
     description: str
     color_scheme: str 
+    direction: str  # [REFACTOR] Properti arah indikator (Makin Tinggi = Makin Baik / Kritis) [3]
 
 class AtlasIndicatorResponse(BaseModel):
     indicator: str
     metadata: AtlasMetadata
+    min_value: float  # [REFACTOR] Jangkar dinamis batas bawah legenda atlas [2]
+    max_value: float  # [REFACTOR] Jangkar dinamis batas atas legenda atlas [2]
     data: Dict[str, float] 
 
 class AtlasIndicatorMetaBrief(BaseModel):
@@ -2840,6 +2874,7 @@ class AssetService:
         return {"detail": f"Aset '{asset.name}' berhasil dihapus secara permanen."}
 
 --- FILE: app\services\atlas_service.py ---
+# app/services/atlas_service.py
 from sqlalchemy.orm import Session
 from sqlalchemy import func, cast, Float, desc
 from app.models import models
@@ -2911,36 +2946,66 @@ class AtlasService:
     @staticmethod
     def get_indicator_metadata(indicator_key: str):
         """
-        Pure Fabrication: Memberikan metadata tambahan seperti satuan atau narasi
-        berdasarkan key indikator yang diminta.
+        [PURE FABRICATION ENGINE]
+        Memberikan metadata tambahan seperti satuan, narasi, skema warna,
+        dan arah evaluasi data (direction) berdasarkan key indikator yang diminta.
         """
+        indicator_key_lower = indicator_key.lower().strip()
+        
+        # 1. Registrasi Metadata Statis untuk Indikator Utama Bappeda
         metadata_map = {
             "stunting": {
                 "title": "Prevalensi Stunting",
                 "unit": "%",
                 "description": "Persentase balita yang mengalami gangguan pertumbuhan (stunting) berdasarkan standar WHO.",
-                "color_scheme": "Reds" 
+                "color_scheme": "Reds",
+                "direction": "negative"  # <--- MAKIN TINGGI PERSENTASE = MAKIN BURUK (KRITIS) [3]
             },
             "jumlah_penduduk": {
                 "title": "Kepadatan Penduduk",
                 "unit": "Jiwa",
                 "description": "Total populasi penduduk yang menetap di wilayah distrik terkait.",
-                "color_scheme": "Blues" 
+                "color_scheme": "Blues",
+                "direction": "positive"  # <--- MAKIN TINGGI JUMLAH = MAKIN MEMADAI (NORMAL) [3]
             },
             "pdrb": {
                 "title": "Produk Domestik Regional Bruto",
                 "unit": "Miliar Rp",
                 "description": "Nilai tambah bruto yang timbul dari seluruh sektor ekonomi di distrik tersebut.",
-                "color_scheme": "Greens" 
+                "color_scheme": "Greens",
+                "direction": "positive"  # <--- MAKIN TINGGI NILAI EKONOMI = MAKIN MAJU (NORMAL) [3]
             }
         }
         
-        return metadata_map.get(indicator_key.lower(), {
+        # Jika kunci indikator terdaftar secara statis, kembalikan metadatanya langsung
+        if indicator_key_lower in metadata_map:
+            return metadata_map[indicator_key_lower]
+            
+        # 2. [PROTECTED VARIATIONS] Smart Fallback Engine:
+        # Jika OPD mengunggah dataset tak terdaftar, tebak arah indikator secara cerdas
+        # berdasarkan kecocokan semantik pola kata kunci negatif.
+        negative_patterns = [
+            r"stunting", r"miskin", r"kemiskinan", r"pengangguran", r"buruk", 
+            r"sakit", r"mati", r"kematian", r"rusak", r"putus_sekolah", 
+            r"lumpuh", r"kurang_gizi", r"gizi_buruk", r"kriminal"
+        ]
+        
+        guessed_direction = "positive"
+        for pattern in negative_patterns:
+            if re.search(pattern, indicator_key_lower):
+                guessed_direction = "negative"
+                break
+                
+        # Menentukan visualisasi skema warna default berdasarkan arah perbandingan data
+        default_color = "Reds" if guessed_direction == "negative" else "Blues"
+        
+        return {
             "title": indicator_key.replace("_", " ").title(),
             "unit": "-",
             "description": "Indikator pembangunan sektoral Kabupaten Mimika.",
-            "color_scheme": "Blues"
-        })
+            "color_scheme": default_color,
+            "direction": guessed_direction  # [3]
+        }
 
 --- FILE: app\services\cleaning_engine.py ---
 import pandas as pd
@@ -3437,10 +3502,14 @@ class SpatialService:
         return profile
 
     @staticmethod
-    def get_district_stats(db: Session, category_id: int = None, year: int = None) -> List[Dict[str, Any]]:
+    def get_district_stats(db: Session, category_id: int = None, year: int = None) -> Dict[str, Any]:
         """
+        [OPTIMALISASI KARTOGRAFI]
         Melakukan komputasi agregasi total dataset per distrik.
         Menggunakan OUTER JOIN agar distrik dengan 0 dataset tetap ter-render di peta.
+        
+        Mengekstrak nilai minimum dan maksimum dari data sebaran secara real-time
+        untuk mendukung visualisasi legenda dinamis (Continuous Anchoring).
         """
         dataset_filters = [Dataset.status == 'approved']
         
@@ -3466,6 +3535,7 @@ class SpatialService:
             .all()
         )
 
+        # 1. Bentuk data spasial
         formatted_response = [
             {
                 "district_name": row.district_name,
@@ -3474,7 +3544,17 @@ class SpatialService:
             for row in query_results
         ]
 
-        return formatted_response
+        # 2. Kalkulasi nilai minimum dan maksimum di memori (Sangat efisien karena N=18 distrik)
+        totals = [item["total_dataset"] for item in formatted_response]
+        min_value = min(totals) if totals else 0
+        max_value = max(totals) if totals else 0
+
+        # 3. Paketkan data ke dalam struktur Wrapper baru
+        return {
+            "min_value": min_value,
+            "max_value": max_value,
+            "data": formatted_response
+        }
 
     @staticmethod
     def get_detailed_district_stats(db: Session, category_id: int = None) -> Dict[str, Any]:
@@ -3572,11 +3652,15 @@ class SpatialService:
     # ============================================================================
     
     @staticmethod
-    def get_indicator_data(db: Session, indicator_key: str) -> Dict[str, float]:
+    def get_indicator_data(db: Session, indicator_key: str) -> Dict[str, Any]:
         """
         [PROTECTED VARIATIONS] Membaca data aggregasi dari tabel Cache, 
         BUKAN melakukan parsing JSON secara langsung (O(1) Access Time).
         Sangat krusial untuk performa Choropleth di WebGIS Publik.
+
+        [OPTIMALISASI KARTOGRAFI]
+        Mengekstrak nilai minimum dan maksimum dari data spasial atlas yang aktif 
+        secara dinamis untuk mencegah kebingungan gradasi warna bagi publik.
         """
         cached_results = (
             db.query(SpatialCache, District.name.label("district_name"))
@@ -3585,12 +3669,26 @@ class SpatialService:
             .all()
         )
 
+        # 1. Bentuk data spasial terformat
         formatted_data = {}
+        values_list = []
+        
         for row, district_name in cached_results:
             clean_key = district_name.lower().replace(" ", "")
-            formatted_data[clean_key] = round(row.value, 2) if row.value else 0
+            val = round(row.value, 2) if row.value else 0.0
+            formatted_data[clean_key] = val
+            values_list.append(val)
 
-        return formatted_data
+        # 2. Ambil nilai ekstrem riil
+        min_value = min(values_list) if values_list else 0.0
+        max_value = max(values_list) if values_list else 0.0
+
+        # 3. Kembalikan dengan struktur pembungkus baru
+        return {
+            "min_value": min_value,
+            "max_value": max_value,
+            "data": formatted_data
+        }
 
     @staticmethod
     def calculate_and_cache_aggregation(db: Session, indicator_key: str):
@@ -3819,3 +3917,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+--- FILE: seed.py ---
+
