@@ -1,3 +1,4 @@
+# app/api/endpoints/users.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -16,20 +17,30 @@ def create_user(
     db: Session = Depends(get_db),
     admin: models.User = Depends(deps.get_admin_user) # Proteksi Admin
 ):
-    # Cek apakah username/email sudah ada
+    # A. Cek apakah username/email sudah ada
     user = db.query(models.User).filter(
         (models.User.username == user_in.username) | (models.User.email == user_in.email)
     ).first()
     if user:
         raise HTTPException(status_code=400, detail="Username atau Email sudah terdaftar")
     
+    # B. Integritas Data: Validasi apakah ID OPD/Source benar-benar eksis di DB [1]
+    if user_in.source_id is not None:
+        source_exists = db.query(models.Source).filter(models.Source.id == user_in.source_id).first()
+        if not source_exists:
+            raise HTTPException(
+                status_code=400, 
+                detail="ID Instansi (OPD) tidak valid atau tidak terdaftar di sistem master."
+            )
+
     new_user = models.User(
         username=user_in.username,
         email=user_in.email,
         full_name=user_in.full_name,
         role=user_in.role,
         hashed_password=security.get_password_hash(user_in.password), # Hash password
-        is_active=user_in.is_active
+        is_active=user_in.is_active,
+        source_id=user_in.source_id # [1] Menyimpan referensi instansi OPD yang sah
     )
     db.add(new_user)
     db.commit()
@@ -68,6 +79,15 @@ def update_user(
     if not db_user:
         raise HTTPException(status_code=404, detail="User tidak ditemukan")
     
+    # Validasi integritas ID OPD baru jika dikirimkan di payload [1]
+    if user_in.source_id is not None:
+        source_exists = db.query(models.Source).filter(models.Source.id == user_in.source_id).first()
+        if not source_exists:
+            raise HTTPException(
+                status_code=400, 
+                detail="ID Instansi (OPD) baru tidak valid atau tidak terdaftar."
+            )
+
     update_data = user_in.dict(exclude_unset=True)
     
     # Jika admin mengupdate password
@@ -75,7 +95,7 @@ def update_user(
         db_user.hashed_password = security.get_password_hash(update_data["password"])
         del update_data["password"]
     
-    # Update field lainnya secara dinamis
+    # Update field lainnya secara dinamis (termasuk source_id jika diubah) [1]
     for field, value in update_data.items():
         setattr(db_user, field, value)
     

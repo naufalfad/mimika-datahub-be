@@ -1,3 +1,4 @@
+# app/api/endpoints/gis.py
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
@@ -77,6 +78,7 @@ def update_district_profile(
     """
     Endpoint untuk Upsert (Update/Insert) Profil Wilayah.
     Hanya dapat dieksekusi oleh Administrator sistem.
+    Mendukung pengiriman data foto wilayah (images) secara mutlak dari Pydantic payload [1].
     """
     # 1. Otorisasi Ketat
     if current_user.role != "admin":
@@ -88,6 +90,7 @@ def update_district_profile(
     # 2. Eksekusi Service
     try:
         # exclude_unset=True memastikan bahwa kita hanya meng-update kolom yang benar-benar dikirim dari Frontend.
+        # Payload ini menyertakan 'images' (list string) yang siap dievaluasi oleh service layer [1].
         profile = SpatialService.update_district_profile(
             db=db, 
             district_id=district_id, 

@@ -2,10 +2,12 @@
 
 
 --- FILE: app\api\api_router.py ---
+# app/api/api_router.py
 from fastapi import APIRouter
 from app.api.endpoints import (
     categories, sources, datasets, data_ingest, data_view, 
-    dashboard, brida, auth, source_type, users, monitoring, gis, atlas
+    dashboard, brida, auth, source_type, users, monitoring, gis, atlas,
+    assets # [REFACTOR] Mengimpor endpoint baru untuk Aset Fisik
 )
 
 api_router = APIRouter()
@@ -13,22 +15,30 @@ api_router = APIRouter()
 # Grouping Router
 api_router.include_router(users.router, prefix="/users", tags=["0. Admin - User Management"])
 api_router.include_router(monitoring.router, prefix="/monitoring", tags=["0. Admin - Monitoring OPD"])
+
+# Kluster Master Data
 api_router.include_router(categories.router, prefix="/categories", tags=["0. Master - Categories"])
 api_router.include_router(source_type.router, prefix="/source-type", tags=["0. Master - Source Type"])
 api_router.include_router(sources.router, prefix="/sources", tags=["1. Master - Sources (OPD)"])
 api_router.include_router(datasets.router, prefix="/datasets", tags=["2. Master - Datasets"])
+
+# [REFACTOR] Register Modul Baru: Manajemen Aset Fisik / GeoTagging
+api_router.include_router(assets.router, prefix="/assets", tags=["2.5 Master - Aset Fisik (GeoTagging)"])
+
+# Kluster Proses & Katalog
 api_router.include_router(data_ingest.router, prefix="/ingest", tags=["3. Process - Upload & Cleaning"])
 api_router.include_router(data_view.router, prefix="/view", tags=["4. Access - View & Catalog"])
+
+# Kluster Analytics & GIS
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["5. Analytics - Dashboard"])
-
-# Registrasi Endpoint Spasial (GIS)
-# Diletakkan pada kluster Analytics karena fungsinya sebagai agregator data analitik
 api_router.include_router(gis.router, prefix="/gis", tags=["5. Analytics - GIS / Spatial"])
-
 api_router.include_router(brida.router, prefix="/brida", tags=["6. Analytics - Survey"])
-api_router.include_router(auth.router, prefix="/auth", tags=["7. Auth - Login"])
 
+# Kluster Eksternal & Scrollytelling
 api_router.include_router(atlas.router, prefix="/atlas", tags=["Atlas Scrollytelling"])
+
+# Kluster Auth
+api_router.include_router(auth.router, prefix="/auth", tags=["7. Auth - Login"])
 
 --- FILE: app\api\deps.py ---
 from fastapi import Depends, HTTPException, status
@@ -57,6 +67,241 @@ def get_admin_user(current_user: models.User = Depends(get_current_user)):
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Hanya Admin yang boleh akses fitur ini")
     return current_user
+
+--- FILE: app\api\endpoints\assets.py ---
+# app/api/endpoints/assets.py
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+from sqlalchemy.orm import Session
+from typing import List, Optional, Dict, Any
+import json
+
+from app.db.session import get_db
+from app.models import models
+from app.schemas import schemas
+from app.api import deps
+from app.services.asset_service import AssetService
+from app.core.cloudinary_config import upload_multiple_images_to_cloudinary
+
+router = APIRouter()
+
+# ==========================================
+# 1. KATEGORI ASET
+# ==========================================
+
+@router.post("/categories", response_model=schemas.AssetCategoryOut)
+def create_asset_category(
+    cat_in: schemas.AssetCategoryCreate, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(deps.get_current_user) 
+):
+    """Menambahkan kategori aset baru (Contoh: Rumah Sakit, Jembatan, dll)"""
+    existing = db.query(models.AssetCategory).filter(models.AssetCategory.name == cat_in.name).first()
+    if existing:
+        return existing
+        
+    new_cat = models.AssetCategory(**cat_in.dict())
+    db.add(new_cat)
+    db.commit()
+    db.refresh(new_cat)
+    return new_cat
+
+@router.get("/categories", response_model=List[schemas.AssetCategoryOut])
+def list_asset_categories(db: Session = Depends(get_db)):
+    """Mengambil daftar seluruh kategori aset (Digunakan oleh Form Frontend)"""
+    return db.query(models.AssetCategory).all()
+
+# ==========================================
+# 2. MANAJEMEN ASET (CRUD DENGAN MULTI-UPLOAD)
+# ==========================================
+
+@router.post("/", response_model=schemas.AssetOut)
+async def create_asset(
+    name: str = Form(...),
+    source_id: int = Form(...),
+    category_id: int = Form(...),
+    lat: float = Form(...),
+    lng: float = Form(...),
+    district_id: Optional[int] = Form(None),
+    description: Optional[str] = Form(None),
+    details: Optional[str] = Form(None), # Dikirim sebagai JSON String dari FE
+    images: List[UploadFile] = File(None), # [FASE 2] Mendukung upload banyak gambar
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(deps.get_current_user)
+):
+    """
+    Endpoint untuk membuat Aset Fisik / GeoTagging baru.
+    Mendukung upload multiple gambar ke Cloudinary dan metadata dinamis (details).
+    """
+    # 1. Parsing Dynamic Metadata (details) dari String ke Dictionary
+    parsed_details = {}
+    if details:
+        try:
+            parsed_details = json.loads(details)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Format 'details' harus berupa JSON string yang valid.")
+
+    # 2. Kumpulkan file gambar yang valid (tidak kosong)
+    valid_images = []
+    if images:
+        for img in images:
+            if img.filename and img.file:
+                valid_images.append(img.file)
+
+    # 3. Upload Gambar ke Cloudinary (Jika Ada)
+    image_urls = []
+    if valid_images:
+        try:
+            # Gunakan fungsi multi-upload dari Fase 2
+            image_urls = upload_multiple_images_to_cloudinary(
+                file_sources=valid_images, 
+                folder_name="mimika_datahub/assets"
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Gagal mengunggah foto aset: {str(e)}")
+
+    # 4. Susun Payload Pydantic
+    payload = schemas.AssetCreate(
+        name=name,
+        source_id=source_id,
+        category_id=category_id,
+        district_id=district_id,
+        lat=lat,
+        lng=lng,
+        description=description,
+        details=parsed_details
+    )
+    
+    # 5. Serahkan ke Pure Fabrication (AssetService)
+    # Ini melindungi Router dari logika validasi geofencing yang kompleks
+    return AssetService.create_asset(db, payload, current_user.id, image_urls)
+
+
+@router.put("/{asset_id}", response_model=schemas.AssetOut)
+async def update_asset(
+    asset_id: int,
+    name: str = Form(...),
+    source_id: int = Form(...),
+    category_id: int = Form(...),
+    lat: float = Form(...),
+    lng: float = Form(...),
+    district_id: Optional[int] = Form(None),
+    description: Optional[str] = Form(None),
+    details: Optional[str] = Form(None),
+    images: List[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(deps.get_current_user)
+):
+    """
+    Endpoint untuk melakukan Update data Aset.
+    Pintar: Jika image tidak dikirim (None), foto lama akan dipertahankan.
+    """
+    parsed_details = {}
+    if details:
+        try:
+            parsed_details = json.loads(details)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Format 'details' harus berupa JSON string yang valid.")
+
+    # Ekstrak file valid
+    valid_images = []
+    if images:
+        for img in images:
+            if img.filename and img.file:
+                valid_images.append(img.file)
+
+    image_urls = []
+    if valid_images:
+        try:
+            image_urls = upload_multiple_images_to_cloudinary(
+                file_sources=valid_images, 
+                folder_name="mimika_datahub/assets"
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Gagal mengunggah foto aset baru: {str(e)}")
+
+    payload = schemas.AssetUpdate(
+        name=name,
+        source_id=source_id,
+        category_id=category_id,
+        district_id=district_id,
+        lat=lat,
+        lng=lng,
+        description=description,
+        details=parsed_details
+    )
+    
+    return AssetService.update_asset(db, asset_id, payload, current_user.id, image_urls)
+
+
+@router.patch("/{asset_id}/moderate", response_model=schemas.AssetOut)
+def moderate_asset(
+    asset_id: int,
+    status: str = Form(...),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(deps.get_admin_user)
+):
+    """Endpoint bagi Admin Bappeda untuk menerima/menolak Aset (Moderation Gate)"""
+    return AssetService.moderate_asset(db, asset_id, status, admin_user)
+
+
+@router.get("/my-assets", response_model=List[schemas.AssetOut])
+def get_my_assets(db: Session = Depends(get_db), current_user: models.User = Depends(deps.get_current_user)):
+    """Mengambil daftar aset untuk tabel manajemen di dashboard OPD."""
+    return AssetService.get_my_assets(db, current_user.id)
+
+
+@router.get("/all", response_model=List[schemas.AssetOut])
+def get_all_assets(db: Session = Depends(get_db), admin_user: models.User = Depends(deps.get_admin_user)):
+    """Endpoint khusus Administrator (Super Admin) untuk meja moderasi."""
+    return AssetService.get_all_assets_for_admin(db)
+
+
+@router.delete("/{asset_id}")
+def delete_asset(asset_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(deps.get_current_user)):
+    """Menghapus data aset fisik"""
+    return AssetService.delete_asset(db, asset_id, current_user.id)
+
+# ==========================================
+# 3. ENGINE EKSPLORER SPASIAL (PUBLIC)
+# ==========================================
+
+@router.get("/public")
+def get_public_assets(db: Session = Depends(get_db)):
+    """
+    Polymorphic Transformer:
+    Mengambil data dari database relasional dan menyusun ulang bentuknya (Transform)
+    menjadi Dictionary Grouping yang 100% kompatibel dengan komponen Frontend.
+    Hanya mengembalikan data yang statusnya 'approved'.
+    """
+    assets = AssetService.get_public_assets(db)
+    grouped_assets = {}
+    
+    for asset in assets:
+        if not asset.owner: 
+            continue
+            
+        opd_name = asset.owner.name
+        opd_slug = opd_name.lower().replace(" ", "_")
+        
+        if opd_slug not in grouped_assets:
+            grouped_assets[opd_slug] = []
+            
+        grouped_assets[opd_slug].append({
+            "id": f"asset_{asset.id}",
+            "name": asset.name,
+            "type": asset.category.name if asset.category else "Umum",
+            "lat": float(asset.lat),
+            "lng": float(asset.lng),
+            "image_url": asset.image_url,
+            "images": asset.images or [], # Pastikan properti array images terkirim
+            "details": asset.details or {},
+            "config": {
+                "color": asset.category.color if asset.category else "#0071bc",
+                "iconUrl": asset.category.icon_url if asset.category and asset.category.icon_url else "/icons/markers/office.svg"
+            }
+        })
+        
+    return grouped_assets
 
 --- FILE: app\api\endpoints\atlas.py ---
 from fastapi import APIRouter, Depends, HTTPException
@@ -1679,12 +1924,15 @@ def delete_user(
     return {"message": f"User '{db_user.username}' berhasil dihapus"}
 
 --- FILE: app\core\cloudinary_config.py ---
+# app/core/cloudinary_config.py
 import os
 import cloudinary
 import cloudinary.uploader
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Konfigurasi koneksi ke Cloudinary
 cloudinary.config( 
   cloud_name = os.getenv("CLOUD_NAME"), 
   api_key = os.getenv("API_KEY"), 
@@ -1694,7 +1942,7 @@ cloudinary.config(
 
 def upload_image_to_cloudinary(file_source, folder_name, resource_type="image", filename=None):
     """
-    file_source bisa berupa file_stream atau bytes.
+    Mengunggah satu file (file_stream atau bytes) ke Cloudinary.
     """
     upload_options = {
         "folder": folder_name,
@@ -1709,6 +1957,31 @@ def upload_image_to_cloudinary(file_source, folder_name, resource_type="image", 
 
     result = cloudinary.uploader.upload(file_source, **upload_options)
     return result.get("secure_url"), result.get("public_id")
+
+# ============================================================================
+# [FASE 2] FUNGSI MULTI-UPLOAD UNTUK MODE TEATER (GALLERY)
+# ============================================================================
+def upload_multiple_images_to_cloudinary(file_sources: list, folder_name: str, resource_type="image"):
+    """
+    Mengunggah banyak file sekaligus ke Cloudinary.
+    Menerima list of file_stream/bytes dan mengembalikan array of Secure URLs.
+    """
+    secure_urls = []
+    
+    if not file_sources:
+        return secure_urls
+        
+    for file_source in file_sources:
+        try:
+            url, _ = upload_image_to_cloudinary(file_source, folder_name, resource_type)
+            secure_urls.append(url)
+        except Exception as e:
+            print(f"Peringatan: Gagal mengunggah salah satu gambar ke Cloudinary: {e}")
+            # Opsional: Jika 1 gagal, kita raise error atau lanjut?
+            # Secara best practice, kita throw exception agar data tidak setengah matang.
+            raise Exception(f"Kegagalan unggah media: {str(e)}")
+            
+    return secure_urls
 
 --- FILE: app\core\security.py ---
 # app/core/security.py
@@ -1846,6 +2119,7 @@ def root():
     return {"message": "Mimika DataHub API is Running"}
 
 --- FILE: app\models\models.py ---
+# app/models/models.py
 from sqlalchemy import Column, Integer, Float, String, ForeignKey, DateTime, JSON, Text, Boolean
 from sqlalchemy.orm import relationship
 from app.db.base import Base
@@ -1860,18 +2134,23 @@ class District(Base):
     datasets = relationship("Dataset", back_populates="district")
     # Relasi One-to-One ke DistrictProfile
     profile = relationship("DistrictProfile", back_populates="district", uselist=False, cascade="all, delete-orphan")
+    
+    # Relasi ke Asset
+    assets = relationship("Asset", back_populates="district")
 
 class DistrictProfile(Base):
     """Tabel Master Data Statis untuk Informasi Profil Distrik (Pop-up Peta)"""
     __tablename__ = "district_profiles"
     id = Column(Integer, primary_key=True, index=True)
-    # unique=True memastikan 1 Distrik hanya memiliki 1 Profil
     district_id = Column(Integer, ForeignKey("districts.id"), unique=True, nullable=False)
     
     luas_wilayah = Column(Float, nullable=True) # Dalam km persegi
     jumlah_penduduk = Column(Integer, nullable=True)
     deskripsi = Column(Text, nullable=True)
     batas_wilayah = Column(Text, nullable=True) # Misal: "Utara: Kab. A, Selatan: Laut Arafura"
+    
+    # [FASE 1] Menyimpan array URL foto wilayah untuk fitur Cinematic Theater
+    images = Column(JSON, nullable=True) 
     
     district = relationship("District", back_populates="profile")
 
@@ -1883,6 +2162,7 @@ class Source(Base):
     type = Column(String) # bps, opd, kementerian, dll
     
     datasets = relationship("Dataset", back_populates="owner")
+    assets = relationship("Asset", back_populates="owner")
 
 class Category(Base):
     """Tabel Kategori Data (Kependudukan, Kesehatan, dll)"""
@@ -1894,7 +2174,7 @@ class Category(Base):
     datasets = relationship("Dataset", back_populates="category")
 
 class SourceType(Base):
-    """Tabel Jenis Sumber ())"""
+    """Tabel Jenis Sumber"""
     __tablename__ = "source_type"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)
@@ -1913,8 +2193,6 @@ class Dataset(Base):
     category_id = Column(Integer, ForeignKey("categories.id"))
     source_type_id = Column(Integer, ForeignKey("source_type.id"))
     
-    # Penambahan Foreign Key untuk Relasi Spasial (GIS)
-    # nullable=True agar dataset tingkat Kabupaten (non-distrik) tetap dapat disimpan
     district_id = Column(Integer, ForeignKey("districts.id"), nullable=True)
 
     year = Column(Integer)
@@ -1923,22 +2201,16 @@ class Dataset(Base):
     view_count = Column(Integer, default=0)
     image_url = Column(String, nullable=True)
     file_url = Column(String, nullable=True)
-    # merged_image_url = Column(String, nullable=True)
 
     total_rows = Column(Integer, default=0)
-    quality_score = Column(Float, default=0.0) # Skor 0-100
-    last_ingest_stats = Column(JSON) # Menyimpan info: {"duplicates": 5, "nulls": 2}
-    
-    # Kita simpan daftar kolom yang sudah dirapikan di sini (misal: ["nama", "tahun", "jumlah"])
+    quality_score = Column(Float, default=0.0) 
+    last_ingest_stats = Column(JSON) 
     headers = Column(JSON) 
     
-    # Workflow Persetujuan Data
     status = Column(String, default="pending")
     structure_type = Column(String, default="tabular")
-    
-    # Workflow Karantina Spasial (Fase 4 - Anomaly Handling)
-    spatial_status = Column(String, default="mapped") # "mapped" jika dikenali AI, "unmapped" jika gagal dikenali
-    needs_review = Column(Boolean, default=False) # Flag penanda butuh intervensi manual dari Admin
+    spatial_status = Column(String, default="mapped")
+    needs_review = Column(Boolean, default=False) 
     
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
@@ -1947,8 +2219,6 @@ class Dataset(Base):
     category = relationship("Category", back_populates="datasets")
     sourceType = relationship("SourceType", back_populates="datasets")
     uploader = relationship("User")
-    
-    # Penambahan Relationship ke entitas District
     district = relationship("District", back_populates="datasets")
 
 class DataRow(Base):
@@ -1956,12 +2226,7 @@ class DataRow(Base):
     __tablename__ = "data_rows"
     id = Column(Integer, primary_key=True, index=True)
     dataset_id = Column(Integer, ForeignKey("datasets.id"))
-    
-    # Isi satu baris file dalam format JSON (Contoh: {"nama": "Mimika Baru", "jumlah": 150})
-    # Ini sangat fleksibel untuk jumlah kolom berapapun.
     content = Column(JSON) 
-    
-    # Hash unik untuk mencegah redundansi (Cek apakah baris isinya sama persis)
     row_hash = Column(String, index=True)
 
     dataset = relationship("Dataset", back_populates="rows")
@@ -1974,9 +2239,8 @@ class Survey(Base):
     location = Column(String)
     start_date = Column(DateTime)
     end_date = Column(DateTime)
-    # Menyimpan struktur pertanyaan: [{"text": "Puas?", "type": "rating"}, ...]
     questions = Column(JSON) 
-    status = Column(String, default="active") # active / closed
+    status = Column(String, default="active")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     responses = relationship("SurveyResponse", back_populates="survey", cascade="all, delete-orphan")
@@ -1985,7 +2249,6 @@ class SurveyResponse(Base):
     __tablename__ = "survey_responses"
     id = Column(Integer, primary_key=True, index=True)
     survey_id = Column(Integer, ForeignKey("surveys.id"))
-    # Menyimpan jawaban responden: {"pertanyaan_1": "Sangat Puas", "pertanyaan_2": 5}
     answers = Column(JSON)
     email = Column(String, nullable=True) 
     submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -2002,8 +2265,73 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     is_active = Column(Boolean, default=True)
 
+    # [FASE 1] Relasi ke aset untuk melacak uploader (Creator Pattern)
+    assets = relationship("Asset", back_populates="uploader")
+
+# ============================================================================
+# [NEW] DOMAIN SPASIAL: MANAJEMEN ASET / GEOTAGGING
+# ============================================================================
+
+class AssetCategory(Base):
+    """Tabel Master Kategori Aset Fisik (Rumah Sakit, Sekolah, Jembatan, dll)"""
+    __tablename__ = "asset_categories"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    
+    icon_url = Column(String, nullable=True)
+    color = Column(String, default="#0071bc")
+    
+    assets = relationship("Asset", back_populates="category")
+
+class Asset(Base):
+    """Tabel Penampung Data Aset Fisik / Hasil GeoTagging dari OPD"""
+    __tablename__ = "assets"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    
+    # Foreign Keys
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False) # Siapa yang menginput (Authorisasi)
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=False) # OPD Pemilik
+    district_id = Column(Integer, ForeignKey("districts.id"), nullable=True) # Wilayah
+    category_id = Column(Integer, ForeignKey("asset_categories.id"), nullable=False) # Tipe Aset
+    
+    # Spasial Coordinates (Crucial for GIS)
+    lat = Column(Float, nullable=False)
+    lng = Column(Float, nullable=False)
+    
+    # Media & Penjelasan
+    image_url = Column(String, nullable=True) # Tetap dipertahankan untuk backward compatibility (cover utama)
+    images = Column(JSON, nullable=True) # [FASE 1] Array URL Foto (Multiupload Cloudinary)
+    description = Column(Text, nullable=True)
+    
+    # Dynamic Metadata
+    details = Column(JSON, nullable=True)
+    
+    # Status Moderasi
+    status = Column(String, default="pending") # pending | approved | rejected
+    
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    # Relasi
+    uploader = relationship("User", back_populates="assets")
+    owner = relationship("Source", back_populates="assets")
+    district = relationship("District", back_populates="assets")
+    category = relationship("AssetCategory", back_populates="assets")
+
+class SpatialCache(Base):
+    """Tabel Cache Agregasi untuk mempercepat load Peta Choropleth"""
+    __tablename__ = "spatial_caches"
+    id = Column(Integer, primary_key=True, index=True)
+    indicator_key = Column(String, index=True, nullable=False) # misal: 'stunting', 'pdrb'
+    district_id = Column(Integer, ForeignKey("districts.id"), nullable=False)
+    value = Column(Float, nullable=False)
+    last_calculated = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    
+    district = relationship("District")
+
 --- FILE: app\schemas\schemas.py ---
-from pydantic import BaseModel
+# app/schemas/schemas.py
+from pydantic import BaseModel, field_validator
 from typing import List, Optional, Any, Dict
 from datetime import datetime
 
@@ -2013,11 +2341,11 @@ class DistrictProfileBase(BaseModel):
     jumlah_penduduk: Optional[int] = None
     deskripsi: Optional[str] = None
     batas_wilayah: Optional[str] = None
+    images: Optional[List[str]] = [] # [FIX] Mendukung array foto dengan default kosong
 
 class DistrictProfileCreate(DistrictProfileBase):
     district_id: int
 
-# FASE 1: Schema untuk validasi form input Admin saat mengupdate profil
 class DistrictProfileUpdate(DistrictProfileBase):
     pass
 
@@ -2034,20 +2362,15 @@ class DistrictCreate(DistrictBase):
 
 class DistrictOut(DistrictBase):
     id: int
-    profile: Optional[DistrictProfileOut] = None # Include statis info on demand
+    profile: Optional[DistrictProfileOut] = None 
     class Config:
         from_attributes = True
 
 class SpatialStatResponse(BaseModel):
-    """
-    Kontrak response untuk agregasi Peta GIS.
-    Menggunakan format yang memudahkan iterasi O(1) atau mapping di frontend.
-    """
     district_name: str
     total_dataset: int
     total_rows: Optional[int] = None
     avg_quality: Optional[float] = None
-
 
 # --- CATEGORY SCHEMAS ---
 class CategoryCreate(BaseModel):
@@ -2088,7 +2411,7 @@ class DatasetCreate(BaseModel):
     source_id: int
     category_id: int
     source_type_id: int
-    district_id: Optional[int] = None # Ditambahkan untuk relasi GIS
+    district_id: Optional[int] = None 
     year: int
     period: str
     dataset_type: str
@@ -2104,7 +2427,7 @@ class DatasetOut(DatasetCreate):
     created_at: datetime
     category: CategoryOut
     sourceType: SourceTypeOut
-    district: Optional[DistrictOut] = None # Ditambahkan untuk output detail dataset
+    district: Optional[DistrictOut] = None 
     class Config:
         from_attributes = True
 
@@ -2116,7 +2439,6 @@ class Stats(BaseModel):
     empty_cells: int
     total: int
     quality_score: float
-
 
 class UploadResponse(BaseModel):
     status: str
@@ -2143,7 +2465,7 @@ class UserBase(BaseModel):
     username: str
     email: str
     full_name: str
-    role: str = "user" # 'admin' atau 'user'
+    role: str = "user" 
     is_active: bool = True
 
 class UserCreate(UserBase):
@@ -2152,7 +2474,7 @@ class UserCreate(UserBase):
 class UserUpdate(BaseModel):
     email: Optional[str] = None
     full_name: Optional[str] = None
-    password: Optional[str] = None # Opsional, diisi jika ingin ganti password
+    password: Optional[str] = None 
     role: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -2166,8 +2488,8 @@ class OPDMonitoringDetail(BaseModel):
     user_id: int
     opd_name: str
     last_submit: Optional[datetime] = None
-    status: str # 'Lengkap', 'Kurang', 'Belum Kirim'
-    progress: str # 'n/12'
+    status: str 
+    progress: str 
     upload_count: int
     avg_quality: float
     email: Optional[str]
@@ -2194,37 +2516,293 @@ class DatasetRecentOut(BaseModel):
     id: int
     title: str
     image_url: Optional[str]
-    template_url: Optional[str] # Diambil dari relasi kategori
+    template_url: Optional[str] 
     category_name: str
     source_name: str
     created_at: datetime
-
     class Config:
         from_attributes = True
 
-        # --- ATLAS / SCROLLYTELLING SCHEMAS ---
-
+# --- ATLAS / SCROLLYTELLING SCHEMAS ---
 class AtlasMetadata(BaseModel):
-    """Skema metadata untuk memberikan konteks naratif pada setiap indikator atlas."""
     title: str
     unit: str
     description: str
-    color_scheme: str # Contoh: 'Reds', 'Blues', 'Greens'
+    color_scheme: str 
 
 class AtlasIndicatorResponse(BaseModel):
-    """
-    DTO Utama untuk Atlas. 
-    Memisahkan antara identitas indikator, metadata narasi, 
-    dan data spasial yang dipetakan langsung ke key distrik (O(1) mapping).
-    """
     indicator: str
     metadata: AtlasMetadata
-    data: Dict[str, float] # Format: {"mimikabaru": 12.5, "wania": 15.0, ...}
+    data: Dict[str, float] 
 
 class AtlasIndicatorMetaBrief(BaseModel):
-    """Skema ringkas untuk list metadata indikator (pilihan menu/sidebar)."""
     key: str
     metadata: AtlasMetadata
+
+# ============================================================================
+# [NEW] ASSET / GEOTAGGING SCHEMAS
+# ============================================================================
+
+class AssetCategoryBase(BaseModel):
+    name: str
+    icon_url: Optional[str] = None
+    color: Optional[str] = "#0071bc"
+
+class AssetCategoryCreate(AssetCategoryBase):
+    pass
+
+class AssetCategoryOut(AssetCategoryBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class AssetBase(BaseModel):
+    name: str
+    source_id: int
+    category_id: int
+    district_id: Optional[int] = None
+    lat: float
+    lng: float
+    description: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+
+class AssetCreate(AssetBase):
+    """
+    Skema untuk validasi input sebelum membuat aset.
+    Sengaja tidak memuat user_id dan images karena akan ditangani internal via Controller di API.
+    """
+    pass
+
+class AssetUpdate(BaseModel):
+    name: Optional[str] = None
+    category_id: Optional[int] = None
+    district_id: Optional[int] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    description: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+    status: Optional[str] = None # Admin berhak memperbarui status moderasi
+
+class AssetOut(AssetBase):
+    """Skema balikan API (Response DTO)"""
+    id: int
+    user_id: int
+    status: str
+    image_url: Optional[str] = None
+    images: Optional[List[str]] = [] # [FIX DARI QA] Menjamin properti images selalu return array (walau kosong)
+    created_at: datetime
+    
+    category: AssetCategoryOut 
+    owner: Optional[SourceOut] = None
+    district: Optional[DistrictOut] = None
+    
+    # [FIX DARI QA] Interceptor untuk memanipulasi data NULL dari SQLAlchemy
+    @field_validator('status', mode='before')
+    @classmethod
+    def default_status(cls, v):
+        if v is None:
+            return "pending"
+        return v
+    
+    class Config:
+        from_attributes = True
+
+--- FILE: app\services\asset_service.py ---
+# app/services/asset_service.py
+import json
+import os
+from sqlalchemy.orm import Session
+from fastapi import HTTPException, status
+from shapely.geometry import Point, shape
+from app.models import models
+from app.schemas import schemas
+
+class AssetService:
+    """
+    Pure Fabrication / Controller untuk Modul Aset Spasial.
+    Bertanggung jawab atas validasi Geofencing, RBAC, dan Karantina Data.
+    """
+
+    @staticmethod
+    def _load_geojson():
+        """Memuat file batas wilayah Mimika untuk validasi Geofencing (Titik dalam Poligon)."""
+        # Sesuaikan path ini dengan letak file GeoJSON Anda di Backend
+        filepath = os.path.join(os.getcwd(), "mimika_18_distrik.json")
+        if not os.path.exists(filepath):
+            # Coba cari di folder static
+            filepath = os.path.join(os.getcwd(), "static", "mimika_18_distrik.json")
+            if not os.path.exists(filepath):
+                return None
+                
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    @staticmethod
+    def validate_geofence(lat: float, lng: float, district_name: str):
+        """
+        [PROTECTED VARIATIONS] Mencegah koordinat asal-asalan masuk ke database.
+        Mengecek secara matematis apakah titik (lat, lng) berada di dalam Poligon distrik.
+        """
+        geo_data = AssetService._load_geojson()
+        
+        if not geo_data:
+            print("Warning: mimika_18_distrik.json tidak ditemukan. Melewati validasi Geofencing.")
+            return True # Bypass jika file map belum tersedia di server
+
+        target_feature = None
+        for feature in geo_data.get("features", []):
+            if feature.get("properties", {}).get("district_name", "").lower() == district_name.lower():
+                target_feature = feature
+                break
+        
+        if not target_feature:
+            raise ValueError(f"Batas wilayah geografis untuk '{district_name}' tidak dikenali oleh sistem.")
+
+        # Shapely menggunakan format spasial X,Y (Longitude, Latitude)
+        point = Point(lng, lat)
+        polygon = shape(target_feature["geometry"])
+
+        if not polygon.contains(point):
+            raise ValueError(
+                f"Koordinat yang Anda masukkan (Lat: {lat}, Lng: {lng}) meleset dan "
+                f"berada DI LUAR batas administrasi Distrik {district_name}."
+            )
+        
+        return True
+
+    @staticmethod
+    def create_asset(db: Session, payload: schemas.AssetCreate, user_id: int, image_urls: list):
+        """Mendaftarkan Aset Baru oleh OPD"""
+        
+        # 1. Validasi Distrik dan Geofencing (Jika ada)
+        if payload.district_id:
+            district = db.query(models.District).filter(models.District.id == payload.district_id).first()
+            if not district:
+                raise HTTPException(status_code=404, detail="ID Distrik tidak valid.")
+            
+            try:
+                # Engine Cek Spasial
+                AssetService.validate_geofence(payload.lat, payload.lng, district.name)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+                
+        # 2. Assign Cover Utama (Backward Compatibility) dan Array Galeri
+        primary_image = image_urls[0] if image_urls else None
+
+        # 3. Simpan ke Database dengan Status Karantina ("pending")
+        new_asset = models.Asset(
+            name=payload.name,
+            user_id=user_id,
+            source_id=payload.source_id,
+            category_id=payload.category_id,
+            district_id=payload.district_id,
+            lat=payload.lat,
+            lng=payload.lng,
+            description=payload.description,
+            details=payload.details,
+            image_url=primary_image,
+            images=image_urls,
+            status="pending"  # Wajib karantina untuk ditinjau Admin
+        )
+
+        db.add(new_asset)
+        db.commit()
+        db.refresh(new_asset)
+        return new_asset
+
+    @staticmethod
+    def get_my_assets(db: Session, user_id: int):
+        """Mengambil data aset milik OPD yang sedang login (Creator Pattern)"""
+        return db.query(models.Asset).filter(models.Asset.user_id == user_id).order_by(models.Asset.created_at.desc()).all()
+
+    @staticmethod
+    def get_all_assets_for_admin(db: Session):
+        """Mengambil seluruh data aset (Digunakan Admin untuk Moderasi)"""
+        return db.query(models.Asset).order_by(models.Asset.created_at.desc()).all()
+
+    @staticmethod
+    def get_public_assets(db: Session):
+        """Endpoint Publik Explorer: Hanya merender aset yang sudah lulus karantina (approved)"""
+        return db.query(models.Asset).filter(models.Asset.status == "approved").all()
+
+    @staticmethod
+    def update_asset(db: Session, asset_id: int, payload: schemas.AssetUpdate, user_id: int, new_image_urls: list = None):
+        """Update data aset dan trigger validasi Geofencing ulang"""
+        asset = db.query(models.Asset).filter(models.Asset.id == asset_id).first()
+        if not asset:
+            raise HTTPException(status_code=404, detail="Aset tidak ditemukan")
+        
+        # [RBAC] Validasi Kepemilikan Data
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+        if user.role != "admin" and asset.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Akses Ditolak: Anda tidak memiliki izin untuk mengubah aset ini.")
+
+        update_data = payload.dict(exclude_unset=True)
+        
+        # Evaluasi Geofencing Jika Koordinat atau Distrik berubah
+        new_lat = update_data.get("lat", asset.lat)
+        new_lng = update_data.get("lng", asset.lng)
+        new_district_id = update_data.get("district_id", asset.district_id)
+
+        if ("lat" in update_data or "lng" in update_data or "district_id" in update_data) and new_district_id:
+            district = db.query(models.District).filter(models.District.id == new_district_id).first()
+            if district:
+                try:
+                    AssetService.validate_geofence(new_lat, new_lng, district.name)
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+
+        # Terapkan perubahan teks
+        for key, value in update_data.items():
+            setattr(asset, key, value)
+
+        # Terapkan perubahan gambar
+        if new_image_urls:
+            # Karena logic kita replace (bukan append), array images lama ditimpa
+            asset.images = new_image_urls
+            asset.image_url = new_image_urls[0] if new_image_urls else None
+
+        # [MODERASI] Jika OPD (user) mengupdate data, statusnya dilempar ke 'pending' lagi.
+        # Jika Admin yang merubah, status tetap (atau sesuai form payload dari admin).
+        if user.role != "admin":
+            asset.status = "pending"
+
+        db.commit()
+        db.refresh(asset)
+        return asset
+
+    @staticmethod
+    def moderate_asset(db: Session, asset_id: int, status: str, admin_user: models.User):
+        """Ubah status aset (Terima/Tolak). Khusus Admin."""
+        if admin_user.role != "admin":
+            raise HTTPException(status_code=403, detail="Akses Ditolak.")
+            
+        if status not in ["approved", "rejected", "pending"]:
+            raise HTTPException(status_code=400, detail="Kode status moderasi tidak valid.")
+        
+        asset = db.query(models.Asset).filter(models.Asset.id == asset_id).first()
+        if not asset:
+            raise HTTPException(status_code=404, detail="Aset tidak ditemukan.")
+        
+        asset.status = status
+        db.commit()
+        db.refresh(asset)
+        return asset
+
+    @staticmethod
+    def delete_asset(db: Session, asset_id: int, user_id: int):
+        """Hapus Aset"""
+        asset = db.query(models.Asset).filter(models.Asset.id == asset_id).first()
+        if not asset:
+            raise HTTPException(status_code=404, detail="Aset tidak ditemukan.")
+
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+        if user.role != "admin" and asset.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Akses Ditolak.")
+
+        db.delete(asset)
+        db.commit()
+        return {"detail": f"Aset '{asset.name}' berhasil dihapus secara permanen."}
 
 --- FILE: app\services\atlas_service.py ---
 from sqlalchemy.orm import Session
@@ -2771,9 +3349,10 @@ class ExportEngine:
         return df.to_csv(index=False).encode('utf-8')
 
 --- FILE: app\services\spatial_service.py ---
+# app/services/spatial_service.py
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, case
-from app.models.models import District, Dataset, Category, DistrictProfile
+from sqlalchemy import func, and_, case, cast, Float
+from app.models.models import District, Dataset, Category, DistrictProfile, SpatialCache, DataRow
 from typing import Dict, Any, List
 
 class SpatialService:
@@ -2789,17 +3368,13 @@ class SpatialService:
         Jika relasi profil untuk distrik ini belum ada, buat baru.
         Jika sudah ada, timpa dengan data payload dari form Admin.
         """
-        # 1. Validasi eksistensi Master District
         district = db.query(District).filter(District.id == district_id).first()
         if not district:
             raise ValueError(f"Distrik dengan ID {district_id} tidak ditemukan.")
 
-        # 2. Ambil profil eksisting
         profile = db.query(DistrictProfile).filter(DistrictProfile.district_id == district_id).first()
 
-        # 3. Logika Upsert
         if not profile:
-            # Insert Baru
             profile = DistrictProfile(
                 district_id=district_id,
                 luas_wilayah=payload.get("luas_wilayah"),
@@ -2809,7 +3384,6 @@ class SpatialService:
             )
             db.add(profile)
         else:
-            # Update Eksisting
             if "luas_wilayah" in payload:
                 profile.luas_wilayah = payload["luas_wilayah"]
             if "jumlah_penduduk" in payload:
@@ -2819,7 +3393,6 @@ class SpatialService:
             if "batas_wilayah" in payload:
                 profile.batas_wilayah = payload["batas_wilayah"]
 
-        # 4. Finalisasi Transaksi
         db.commit()
         db.refresh(profile)
         return profile
@@ -2828,15 +3401,8 @@ class SpatialService:
     def get_district_stats(db: Session, category_id: int = None, year: int = None) -> List[Dict[str, Any]]:
         """
         Melakukan komputasi agregasi total dataset per distrik.
-        
-        Logika Kritis:
-        Kita menggunakan OUTER JOIN dan eksekusi filter di dalam argumen COUNT (case expression).
-        Jika kita menggunakan `.filter(Dataset.category_id == X)` di level query utama, 
-        Outer Join akan berubah menjadi Inner Join secara otomatis di level SQL, 
-        sehingga distrik dengan 0 dataset akan hilang dari Payload Response.
+        Menggunakan OUTER JOIN agar distrik dengan 0 dataset tetap ter-render di peta.
         """
-        
-        # 1. PERBAIKAN: WAJIB filter status approved agar data hantu tidak muncul di peta
         dataset_filters = [Dataset.status == 'approved']
         
         if category_id is not None:
@@ -2844,8 +3410,6 @@ class SpatialService:
         if year is not None:
             dataset_filters.append(Dataset.year == year)
             
-        # 2. PERBAIKAN SYNTAX SQLALCHEMY 2.0: 
-        # Tanpa list [], langsung passing tuple posisional (condition, value)
         aggregation_expr = func.count(
             case(
                 (and_(*dataset_filters), Dataset.id), 
@@ -2853,7 +3417,6 @@ class SpatialService:
             )
         ).label("total_data")
 
-        # 3. Eksekusi ORM Query menggunakan Left Outer Join
         query_results = (
             db.query(
                 District.name.label("district_name"),
@@ -2864,7 +3427,6 @@ class SpatialService:
             .all()
         )
 
-        # 4. Restrukturisasi hasil ke format Array of Objects
         formatted_response = [
             {
                 "district_name": row.district_name,
@@ -2878,10 +3440,8 @@ class SpatialService:
     @staticmethod
     def get_detailed_district_stats(db: Session, category_id: int = None) -> Dict[str, Any]:
         """
-        [Opsional/Ekspansi] Metode tambahan untuk menampilkan statistik multivariabel
-        Misal: Mengirimkan total baris (rows) atau rata-rata skor kualitas per distrik.
+        Endpoint ekspansi spasial untuk Tooltip Interaktif di peta.
         """
-        # PERBAIKAN: Cegah perhitungan data pending
         filters = [Dataset.status == 'approved']
         if category_id is not None:
             filters.append(Dataset.category_id == category_id)
@@ -2916,17 +3476,16 @@ class SpatialService:
         Engine untuk Pop-up Peta: Menarik Narasi Statis (Profile) dan 
         Agregasi Kepadatan per Kategori (Dinamis).
         """
-        # 1. Ambil Master Data & Profil Statis
         district = db.query(District).filter(District.id == district_id).first()
         if not district:
             return None
 
-        # Fallback profile jika Bappeda belum mengisi data statisnya
         profile_data = {
             "luas_wilayah": None,
             "jumlah_penduduk": None,
             "deskripsi": "Data profil wilayah belum diatur oleh administrator.",
-            "batas_wilayah": None
+            "batas_wilayah": None,
+            "images": [] # Pastikan mengembalikan array kosong jika belum ada gambar
         }
         
         if district.profile:
@@ -2934,11 +3493,10 @@ class SpatialService:
                 "luas_wilayah": district.profile.luas_wilayah,
                 "jumlah_penduduk": district.profile.jumlah_penduduk,
                 "deskripsi": district.profile.deskripsi,
-                "batas_wilayah": district.profile.batas_wilayah
+                "batas_wilayah": district.profile.batas_wilayah,
+                "images": district.profile.images or []
             }
 
-        # 2. Agregasi Total Dataset per Kategori secara on-the-fly
-        # PERBAIKAN: Tambahkan Dataset.status == 'approved' ke kondisi Join
         category_stats = (
             db.query(
                 Category.id.label("category_id"),
@@ -2960,16 +3518,90 @@ class SpatialService:
                 "name": row.name,
                 "total": row.total
             }
-            for row in category_stats if row.total > 0 # Hanya tampilkan kategori yang ada datanya
+            for row in category_stats if row.total > 0
         ]
 
-        # 3. Strukturisasi Response O(1)
         return {
             "district_id": district.id,
             "district_name": district.name,
             "profile": profile_data,
             "categories": categories_data
         }
+
+    # ============================================================================
+    # [REFACTOR] FASE 3: CHOROPLETH ENGINE MENGGUNAKAN REDIS/DB CACHING
+    # ============================================================================
+    
+    @staticmethod
+    def get_indicator_data(db: Session, indicator_key: str) -> Dict[str, float]:
+        """
+        [PROTECTED VARIATIONS] Membaca data aggregasi dari tabel Cache, 
+        BUKAN melakukan parsing JSON secara langsung (O(1) Access Time).
+        Sangat krusial untuk performa Choropleth di WebGIS Publik.
+        """
+        cached_results = (
+            db.query(SpatialCache, District.name.label("district_name"))
+            .join(District, District.id == SpatialCache.district_id)
+            .filter(SpatialCache.indicator_key == indicator_key)
+            .all()
+        )
+
+        formatted_data = {}
+        for row, district_name in cached_results:
+            clean_key = district_name.lower().replace(" ", "")
+            formatted_data[clean_key] = round(row.value, 2) if row.value else 0
+
+        return formatted_data
+
+    @staticmethod
+    def calculate_and_cache_aggregation(db: Session, indicator_key: str):
+        """
+        [BACKGROUND TASK ENGINE] Menghitung agregasi rata-rata nilai dari kolom JSON 
+        di tabel DataRow, kemudian menyimpannya/menimpanya ke tabel SpatialCache.
+        Fungsi ini harus dipicu (Triggered) oleh Event (contoh: Saat Dataset di-Approve Admin).
+        """
+        print(f"[Engine] Memulai kalkulasi agregasi spasial untuk indikator: {indicator_key}...")
+        
+        # 1. Eksekusi Heavy Query (Parsing JSONB ke Float)
+        query = (
+            db.query(
+                District.id.label("district_id"),
+                func.avg(
+                    cast(
+                        DataRow.content[indicator_key].astext,
+                        Float
+                    )
+                ).label("average_value")
+            )
+            .join(Dataset, Dataset.id == DataRow.dataset_id)
+            .join(District, District.id == Dataset.district_id)
+            .filter(Dataset.status == "approved")
+            .filter(DataRow.content[indicator_key].astext.isnot(None))
+            .group_by(District.id)
+        )
+
+        results = query.all()
+
+        # 2. Hapus Cache Lama untuk Indikator ini (Clear & Rebuild)
+        db.query(SpatialCache).filter(SpatialCache.indicator_key == indicator_key).delete()
+        db.commit()
+
+        # 3. Simpan Hasil Perhitungan ke Tabel Cache
+        caches_to_insert = []
+        for row in results:
+            if row.average_value is not None:
+                new_cache = SpatialCache(
+                    indicator_key=indicator_key,
+                    district_id=row.district_id,
+                    value=row.average_value
+                )
+                caches_to_insert.append(new_cache)
+                
+        if caches_to_insert:
+            db.bulk_save_objects(caches_to_insert)
+            db.commit()
+            
+        print(f"[Engine] Kalkulasi selesai. {len(caches_to_insert)} baris cache disimpan.")
 
 --- FILE: copy_project.py ---
 import os

@@ -135,6 +135,9 @@ class UserBase(BaseModel):
     full_name: str
     role: str = "user" 
     is_active: bool = True
+    
+    # [INTEGRASI OPD-USER BINDING] Menambahkan referensi instansi ke properti user dasar [1]
+    source_id: Optional[int] = None # [1]
 
 class UserCreate(UserBase):
     password: str
@@ -145,6 +148,9 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None 
     role: Optional[str] = None
     is_active: Optional[bool] = None
+    
+    # [INTEGRASI OPD-USER BINDING] Mendukung update parameter instansi di halaman Manajemen Akun [1]
+    source_id: Optional[int] = None # [1]
 
 class UserOut(UserBase):
     id: int

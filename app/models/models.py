@@ -135,6 +135,7 @@ class SurveyResponse(Base):
     survey = relationship("Survey", back_populates="responses")
 
 class User(Base):
+    """Tabel Data Pengguna & Akun Autentikasi"""
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True, nullable=False)
@@ -144,6 +145,11 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     is_active = Column(Boolean, default=True)
 
+    # [INTEGRASI OPD-USER BINDING] Menghubungkan secara eksplisit ke tabel Master OPD [1]
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=True) # [1]
+
+    # Relasi
+    source = relationship("Source")
     # [FASE 1] Relasi ke aset untuk melacak uploader (Creator Pattern)
     assets = relationship("Asset", back_populates="uploader")
 

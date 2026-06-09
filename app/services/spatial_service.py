@@ -16,6 +16,7 @@ class SpatialService:
         [Fase 1] Engine Upsert (Update/Insert) untuk Manajemen Profil Wilayah.
         Jika relasi profil untuk distrik ini belum ada, buat baru.
         Jika sudah ada, timpa dengan data payload dari form Admin.
+        Mendukung pemrosesan data list foto wilayah (images) secara dinamis [1].
         """
         district = db.query(District).filter(District.id == district_id).first()
         if not district:
@@ -29,7 +30,8 @@ class SpatialService:
                 luas_wilayah=payload.get("luas_wilayah"),
                 jumlah_penduduk=payload.get("jumlah_penduduk"),
                 deskripsi=payload.get("deskripsi"),
-                batas_wilayah=payload.get("batas_wilayah")
+                batas_wilayah=payload.get("batas_wilayah"),
+                images=payload.get("images")  # [1] Menyimpan array URL foto wilayah baru
             )
             db.add(profile)
         else:
@@ -41,6 +43,8 @@ class SpatialService:
                 profile.deskripsi = payload["deskripsi"]
             if "batas_wilayah" in payload:
                 profile.batas_wilayah = payload["batas_wilayah"]
+            if "images" in payload:
+                profile.images = payload["images"]  # [1] Memperbarui array URL foto wilayah
 
         db.commit()
         db.refresh(profile)
