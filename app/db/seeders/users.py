@@ -73,7 +73,7 @@ def seed_users(db: Session) -> dict:
         existing_user = db.query(models.User).filter(models.User.username == u["username"]).first()
         if not existing_user:
             # Enkripsi password menggunakan modul Bcrypt standar keamanan kita [cite: 830, 831]
-            hashed_pw = security.get_password_hash("Mimika123!")
+            hashed_pw = security.get_password_hash("password123")
             
             new_user = models.User(
                 username=u["username"],
