@@ -2077,19 +2077,582 @@ from sqlalchemy.ext.declarative import declarative_base
 Base = declarative_base()
 
 --- FILE: app\db\seeders\__init__.py ---
-
+# app/db/seeders/__init__.py
+from .users import seed_users
+from .wilayah import seed_wilayah
+from .aset import seed_assets
+from .dataset import seed_datasets
 
 --- FILE: app\db\seeders\aset.py ---
+# app/db/seeders/aset.py
+from sqlalchemy.orm import Session
+from app.models import models
 
+# ============================================================================
+# DATA MASTER: KATEGORI ASET GEOTAGGING [cite: ASSET_TAXONOMY_CONFIG]
+# ============================================================================
+ASSET_CATEGORIES_DATA = [
+    {"id": 1, "name": "Rumah Sakit", "icon_url": "/icons/markers/hospital.svg", "color": "#EF4444"},
+    {"id": 2, "name": "Puskesmas", "icon_url": "/icons/markers/clinic.svg", "color": "#F97316"},
+    {"id": 3, "name": "Puskesmas Pembantu", "icon_url": "/icons/markers/aid.svg", "color": "#EAB308"},
+    {"id": 4, "name": "Gedung Sekolah", "icon_url": "/icons/markers/school.svg", "color": "#10B981"},
+    {"id": 5, "name": "Infrastruktur Jembatan", "icon_url": "/icons/markers/bridge.svg", "color": "#64748B"}
+]
+
+def seed_assets(db: Session) -> dict:
+    """
+    [GRASP - INFORMATION EXPERT & CREATOR]
+    Modul Seeder Aset Fisik (Geotagging).
+    Menarik rujukan foreign keys secara dinamis untuk mengeliminasi hardcoding rujukan data [1, 10].
+    """
+    stats = {"categories_inserted": 0, "assets_inserted": 0}
+
+    # 1. SEED KATEGORI ASET [cite: ASSET_TAXONOMY_CONFIG]
+    for ac in ASSET_CATEGORIES_DATA:
+        existing_cat = db.query(models.AssetCategory).filter(models.AssetCategory.id == ac["id"]).first()
+        if not existing_cat:
+            name_check = db.query(models.AssetCategory).filter(models.AssetCategory.name == ac["name"]).first()
+            if not name_check:
+                db.add(models.AssetCategory(
+                    id=ac["id"],
+                    name=ac["name"],
+                    icon_url=ac["icon_url"],
+                    color=ac["color"]
+                ))
+                stats["categories_inserted"] += 1
+    db.commit() # Commit agar ID kategori terbaca oleh inisialisasi tabel aset di bawahnya
+
+    # 2. RESOLUSI RELASI PENGGUNA (USERS) SECARA DINAMIS [cite: 830]
+    user_admin = db.query(models.User).filter(models.User.username == "admin").first()
+    user_dinkes = db.query(models.User).filter(models.User.username == "dinkes").first()
+
+    # Fallback aman jika akun belum dimasukkan oleh seeder user
+    admin_id = user_admin.id if user_admin else 1
+    dinkes_id = user_dinkes.id if user_dinkes else 1
+
+    # 3. RESOLUSI RELASI INSTANSI (OPD) SECARA DINAMIS [cite: ASSET_TAXONOMY_CONFIG]
+    source_dinkes = db.query(models.Source).filter(models.Source.name == "Dinas Kesehatan").first()
+    source_disdik = db.query(models.Source).filter(models.Source.name == "Dinas Pendidikan").first()
+    source_pupr = db.query(models.Source).filter(models.Source.name == "Dinas PUPR").first()
+
+    dinkes_source_id = source_dinkes.id if source_dinkes else 2
+    disdik_source_id = source_disdik.id if source_disdik else 3
+    pupr_source_id = source_pupr.id if source_pupr else 4
+
+    # 4. RESOLUSI RELASI WILAYAH (DISTRICTS) SECARA DINAMIS [cite: DISTRICT_MAP]
+    dist_mimika_baru = db.query(models.District).filter(models.District.name == "Mimika Baru").first()
+    dist_wania = db.query(models.District).filter(models.District.name == "Wania").first()
+
+    mimika_baru_id = dist_mimika_baru.id if dist_mimika_baru else 1
+    wania_id = dist_wania.id if dist_wania else 4
+
+    # 5. STRUKTUR DATA TITIK ASET FISIK REKAYASA (REAL-COORDINATE MIMIKA) [cite: 10]
+    assets_sample = [
+        {
+            "name": "RSUD Kabupaten Mimika",
+            "user_id": dinkes_id, 
+            "source_id": dinkes_source_id, 
+            "district_id": mimika_baru_id, 
+            "category_id": 1, # Rumah Sakit
+            "lat": -4.5450, 
+            "lng": 136.8900, 
+            "description": "Gedung RSUD Utama Kabupaten Mimika, menyajikan pelayanan kesehatan rujukan tingkat pertama, IGD 24 Jam, dan klinik spesialis terpadu.",
+            "details": {
+                "Kapasitas Bed": "150 Tempat Tidur", 
+                "Status Akreditasi": "Paripurna", 
+                "Tahun Operasional": "2008",
+                "Status Lahan": "Sertifikat Hak Pakai Pemda"
+            },
+            "images": [
+                "https://images.unsplash.com/photo-1587351021355-a479a299d2f9?auto=format&fit=crop&w=800&q=80",
+                "https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?auto=format&fit=crop&w=800&q=80"
+            ]
+        },
+        {
+            "name": "Puskesmas Timika Baru",
+            "user_id": dinkes_id, 
+            "source_id": dinkes_source_id, 
+            "district_id": mimika_baru_id, 
+            "category_id": 2, # Puskesmas
+            "lat": -4.5300, 
+            "lng": 136.8850, 
+            "description": "Puskesmas induk Distrik Mimika Baru, berfokus pada upaya preventif-promotif kependudukan, imunisasi wajib anak, dan KIA.",
+            "details": {
+                "Status Operasional": "Aktif Penuh", 
+                "Layanan Rawat Inap": "Tersedia (Terbatas)", 
+                "Rata-rata Pasien/Hari": "85 Pasien"
+            },
+            "images": [
+                "https://images.unsplash.com/photo-1516549655169-df83a0774514?auto=format&fit=crop&w=800&q=80"
+            ]
+        },
+        {
+            "name": "SMP Negeri 2 Mimika Baru",
+            "user_id": admin_id, 
+            "source_id": disdik_source_id, 
+            "district_id": mimika_baru_id, 
+            "category_id": 4, # Gedung Sekolah
+            "lat": -4.5350, 
+            "lng": 136.8950, 
+            "description": "Fasilitas sarana pendidikan dasar menengah tingkat pertama, di bawah naungan Dinas Pendidikan Kabupaten Mimika.",
+            "details": {
+                "Jumlah Siswa": "450 Siswa", 
+                "Jumlah Guru Aktif": "32 Guru", 
+                "Status Bangunan": "Milik Pemda",
+                "Jumlah Ruang Kelas": "12 Kelas"
+            },
+            "images": [
+                "https://images.unsplash.com/photo-1580582932707-520aed937b7b?auto=format&fit=crop&w=800&q=80"
+            ]
+        },
+        {
+            "name": "Jembatan Poros Sungai Wania",
+            "user_id": admin_id, 
+            "source_id": pupr_source_id, 
+            "district_id": wania_id, 
+            "category_id": 5, # Infrastruktur Jembatan
+            "lat": -4.5650, 
+            "lng": 136.9150, 
+            "description": "Infrastruktur penyeberangan vital yang mengintegrasikan jalan poros utama Distrik Wania dengan pusat kota Timika.",
+            "details": {
+                "Panjang Bentang": "120 Meter", 
+                "Tahun Selesai": "2024",
+                "Konstruksi Utama": "Rangka Baja Kelas A",
+                "Kontraktor Pelaksana": "PT. Papua Karya Abadi"
+            },
+            "images": [
+                "https://images.unsplash.com/photo-1545569341-9eb8b30979d9?auto=format&fit=crop&w=800&q=80"
+            ]
+        }
+    ]
+
+    # 6. SEED PHYSICAL ASSETS (IDEMPOTENT CHECK) [cite: 10]
+    for a in assets_sample:
+        existing_asset = db.query(models.Asset).filter(models.Asset.name == a["name"]).first()
+        if not existing_asset:
+            db.add(models.Asset(
+                name=a["name"],
+                user_id=a["user_id"],
+                source_id=a["source_id"],
+                district_id=a["district_id"],
+                category_id=a["category_id"],
+                lat=a["lat"],
+                lng=a["lng"],
+                description=a["description"],
+                details=a["details"],
+                image_url=a["images"][0],
+                images=a["images"],
+                status="approved"  # Otomatis langsung lulus karantina agar langsung tampil di peta publik
+            ))
+            stats["assets_inserted"] += 1
+            
+    db.commit()
+    return stats
 
 --- FILE: app\db\seeders\dataset.py ---
+# app/db/seeders/dataset.py
+import json
+import hashlib
+from sqlalchemy.orm import Session
+from app.models import models
+from app.services.spatial_service import SpatialService  # Untuk memanaskan cache peta [cite: 15]
 
+# ============================================================================
+# DATA TRANSAKSIONAL: PREVALENSI STUNTING PER DISTRIK (RIIL) [cite: DISTRICT_MAP]
+# ============================================================================
+STUNTING_VALUES = {
+    "Mimika Baru": 12.4, 
+    "Kuala Kencana": 9.1, 
+    "Tembagapura": 6.5, 
+    "Wania": 14.8,
+    "Iwaka": 19.2, 
+    "Kwamki Narama": 15.5, 
+    "Mimika Timur": 22.4, 
+    "Mimika Tengah": 24.1,
+    "Mimika Barat": 28.3, 
+    "Agimuga": 32.5, 
+    "Jila": 38.2, 
+    "Jita": 35.0,
+    "Mimika Timur Jauh": 29.8, 
+    "Mimika Barat Jauh": 31.4, 
+    "Mimika Barat Tengah": 27.5,
+    "Amar": 26.8, 
+    "Hoya": 41.2, 
+    "Alama": 44.5
+}
+
+def seed_datasets(db: Session) -> dict:
+    """
+    [GRASP - CREATOR & INFORMATION EXPERT]
+    Modul Seeder Dataset, DataRow, dan Pemanas Cache Spasial [2, 15].
+    Menghitung hash MD5 secara dinamis untuk mengamankan redundansi data [2].
+    """
+    stats = {"datasets_inserted": 0, "rows_inserted": 0, "cache_warmed": False}
+
+    # 1. RESOLUSI FOREIGN KEYS SECARA DINAMIS (Bebas Hardcoded ID)
+    user_dinkes = db.query(models.User).filter(models.User.username == "dinkes").first()
+    source_dinkes = db.query(models.Source).filter(models.Source.name == "Dinas Kesehatan").first()
+    category_kesehatan = db.query(models.Category).filter(models.Category.name == "Kesehatan").first()
+    source_type_sektoral = db.query(models.SourceType).filter(models.SourceType.name == "Statistik Sektoral").first()
+
+    dinkes_id = user_dinkes.id if user_dinkes else 3
+    dinkes_source_id = source_dinkes.id if source_dinkes else 2
+    kesehatan_id = category_kesehatan.id if category_kesehatan else 2
+    sektoral_id = source_type_sektoral.id if source_type_sektoral else 1
+
+    # 2. SEED DATASET METADATA (IDEMPOTENT CHECK) [cite: 2]
+    dataset_title = "Prevalensi Stunting Mimika 2025"
+    existing_dataset = db.query(models.Dataset).filter(models.Dataset.title == dataset_title).first()
+
+    if not existing_dataset:
+        stunting_dataset = models.Dataset(
+            user_id=dinkes_id,
+            title=dataset_title,
+            dataset_type="pemerintah",
+            source_id=dinkes_source_id,
+            category_id=kesehatan_id,
+            source_type_id=sektoral_id,
+            district_id=None,  # Level Kabupaten (Multi-Spatial mapping)
+            year=2025,
+            period="Tahunan",
+            description="Laporan data prevalensi stunting balita per distrik di wilayah Kabupaten Mimika tahun anggaran 2025.",
+            total_rows=18,
+            quality_score=100.0,
+            headers=["distrik", "stunting"],
+            status="approved",
+            structure_type="tabular",
+            spatial_status="mapped",
+            image_url="https://images.unsplash.com/photo-1516549655169-df83a0774514?auto=format&fit=crop&w=800&q=80"
+        )
+        db.add(stunting_dataset)
+        db.flush() # Flush agar stunting_dataset.id siap direferensikan oleh DataRow [cite: 2]
+        stats["datasets_inserted"] += 1
+
+        # 3. SEED 18 DATAROW SPASIAL [cite: 2]
+        for dist_name, st_val in STUNTING_VALUES.items():
+            # Cari nama distrik di database untuk memastikan integritas rujukan
+            db_dist = db.query(models.District).filter(models.District.name == dist_name).first()
+            resolved_dist_name = db_dist.name if db_dist else dist_name
+
+            row_content = {
+                "distrik": resolved_dist_name,
+                "stunting": st_val
+            }
+            
+            # Memformat JSON string secara konsisten untuk kalkulasi Hash MD5 [cite: 2]
+            row_json = json.dumps(row_content, sort_keys=True)
+            row_hash = hashlib.md5(row_json.encode()).hexdigest()
+            
+            db.add(models.DataRow(
+                dataset_id=stunting_dataset.id,
+                content=row_content,
+                row_hash=row_hash
+            ))
+            stats["rows_inserted"] += 1
+
+        db.commit()
+        print(f"[Seeder] Sukses menyuntikkan 18 baris data stunting untuk dataset ID: #{stunting_dataset.id}")
+
+    # 4. MEMANASKAN CACHE SPASIAL (WARMING-UP SPATIAL CACHE) [cite: 15]
+    print("[Seeder] Memicu background task kalkulasi rata-rata spasial untuk 'stunting'...")
+    try:
+        # Menghitung agregasi rata-rata dari kolom JSON dan mengisi tabel spatial_caches [cite: 15]
+        SpatialService.calculate_and_cache_aggregation(db, "stunting")
+        stats["cache_warmed"] = True
+    except Exception as cache_error:
+        print(f"❌ [Seeder Warning] Gagal menghitung cache spasial: {str(cache_error)}")
+
+    return stats
 
 --- FILE: app\db\seeders\users.py ---
-        
+        # app/db/seeders/users.py
+from sqlalchemy.orm import Session
+from app.models import models
+from app.core import security  # Mengimpor modul enkripsi password bawaan [cite: 830]
+
+# ============================================================================
+# DATA MASTER: LEMBAGA / OPD (Prasyarat Utama Relasi) [cite: ASSET_TAXONOMY_CONFIG]
+# ============================================================================
+SOURCES_DATA = [
+    {"id": 1, "name": "BAPPEDA", "type": "opd"},
+    {"id": 2, "name": "Dinas Kesehatan", "type": "opd"},
+    {"id": 3, "name": "Dinas Pendidikan", "type": "opd"},
+    {"id": 4, "name": "Dinas PUPR", "type": "opd"},
+    {"id": 5, "name": "Dinas Sosial", "type": "opd"},
+    {"id": 6, "name": "BPS Mimika", "type": "bps"}
+]
+
+# ============================================================================
+# DATA TRANSAKSIONAL: AKUN PENGGUNA MASTER [cite: 830]
+# ============================================================================
+USERS_DATA = [
+    {
+        "username": "admin",
+        "email": "admin@mimikakab.go.id",
+        "full_name": "Bappeda Administrator",
+        "role": "admin",
+        "source_id": 1  # Terikat ke BAPPEDA
+    },
+    {
+        "username": "brida",
+        "email": "operator.brida@mimikakab.go.id",
+        "full_name": "Operator BRIDA Mimika",
+        "role": "brida",
+        "source_id": 1  # Terikat ke BAPPEDA
+    },
+    {
+        "username": "dinkes",
+        "email": "operator.dinkes@mimikakab.go.id",
+        "full_name": "Operator Dinas Kesehatan",
+        "role": "user",  # Peran operator umum OPD (Dinkes) [cite: 1]
+        "source_id": 2  # Terikat ke Dinas Kesehatan
+    }
+]
+
+def seed_users(db: Session) -> dict:
+    """
+    [GRASP - INFORMATION EXPERT]
+    Modul Seeder Pengguna & Lembaga.
+    Mengeksekusi injeksi data master secara aman (Idempotent) dengan memeriksa
+    keberadaan data kunci sebelum melakukan penyimpanan untuk menghindari IntegrityError.
+    """
+    stats = {"sources_inserted": 0, "users_inserted": 0}
+    
+    # 1. SEED MASTER OPD (SOURCES)
+    for s in SOURCES_DATA:
+        existing_source = db.query(models.Source).filter(models.Source.id == s["id"]).first()
+        if not existing_source:
+            # Cegah duplikasi berdasarkan nama unik jika ID bentrok di DB kustom
+            name_check = db.query(models.Source).filter(models.Source.name == s["name"]).first()
+            if not name_check:
+                new_source = models.Source(
+                    id=s["id"],
+                    name=s["name"],
+                    type=s["type"]
+                )
+                db.add(new_source)
+                stats["sources_inserted"] += 1
+                
+    db.commit() # Commit tahap 1 agar relasi ID Source terbentuk dan terbaca oleh tahap 2
+
+    # 2. SEED USERS [cite: 830]
+    for u in USERS_DATA:
+        existing_user = db.query(models.User).filter(models.User.username == u["username"]).first()
+        if not existing_user:
+            # Enkripsi password menggunakan modul Bcrypt standar keamanan kita [cite: 830, 831]
+            hashed_pw = security.get_password_hash("password123")
+            
+            new_user = models.User(
+                username=u["username"],
+                email=u["email"],
+                full_name=u["full_name"],
+                role=u["role"],
+                hashed_password=hashed_pw,
+                is_active=True,
+                source_id=u["source_id"]
+            )
+            db.add(new_user)
+            stats["users_inserted"] += 1
+            
+    db.commit()
+    return stats
 
 --- FILE: app\db\seeders\wilayah.py ---
+# app/db/seeders/wilayah.py
+from sqlalchemy.orm import Session
+from app.models import models
 
+# ============================================================================
+# DATA MASTER: 18 DISTRIK & PROFIL KEWILAYAHAN [cite: DISTRICT_MAP, MOCK_DISTRICT_DRILLDOWN]
+# ============================================================================
+WILAYAH_DATA = [
+    {
+        "id": 1, 
+        "name": "Mimika Baru", 
+        "luas": 2216.00, 
+        "penduduk": 142519, 
+        "batas": "Utara: Kuala Kencana, Selatan: Wania, Timur: Mimika Timur, Barat: Iwaka",
+        "deskripsi": "Distrik Mimika Baru adalah pusat administrasi pemerintahan dan episentrum ekonomi utama Kabupaten Mimika. Menghadapi tantangan urbanisasi cepat, distrik ini menjadi wilayah terpadat."
+    },
+    {
+        "id": 2, 
+        "name": "Kuala Kencana", 
+        "luas": 860.74, 
+        "penduduk": 29104, 
+        "batas": "Utara: Tembagapura, Selatan: Mimika Baru, Timur: Kwamki Narama, Barat: Iwaka",
+        "deskripsi": "Kuala Kencana merupakan kota industri modern yang didesain secara asri dengan utilitas bawah tanah dan sistem pengolahan limbah berstandar internasional."
+    },
+    {
+        "id": 3, 
+        "name": "Tembagapura", 
+        "luas": 2586.88, 
+        "penduduk": 22120, 
+        "batas": "Utara: Kabupaten Puncak, Selatan: Kuala Kencana, Timur: Agimuga, Barat: Jila",
+        "deskripsi": "Distrik dataran tinggi pegunungan Mimika yang menampung area operasional pertambangan emas dan tembaga utama nasional."
+    },
+    {
+        "id": 4, 
+        "name": "Wania", 
+        "luas": 310.20, 
+        "penduduk": 55210, 
+        "batas": "Utara: Mimika Baru, Selatan: Laut Arafuru, Timur: Mimika Timur, Barat: Mimika Tengah",
+        "deskripsi": "Wania berkembang pesat sebagai wilayah penyangga kota Timika dengan basis komoditas pertanian dan peternakan lokal."
+    },
+    {
+        "id": 5, 
+        "name": "Iwaka", 
+        "luas": 785.40, 
+        "penduduk": 11450, 
+        "batas": "Utara: Tembagapura, Selatan: Mimika Tengah, Timur: Kuala Kencana, Barat: Mimika Barat",
+        "deskripsi": " iwaka dilalui oleh jalur poros Trans Papua, menyimpan potensi ekowisata alam dan perkebunan kelapa sawit yang subur."
+    },
+    {
+        "id": 6, 
+        "name": "Kwamki Narama", 
+        "luas": 240.50, 
+        "penduduk": 14890, 
+        "batas": "Utara: Kuala Kencana, Selatan: Mimika Baru, Timur: Mimika Timur, Barat: Wania",
+        "deskripsi": "Kwamki Narama kini berkembang menjadi pusat permukiman baru yang asri dengan fokus pemberdayaan ekonomi komunitas pemuda lokal."
+    },
+    {
+        "id": 7, 
+        "name": "Mimika Timur", 
+        "luas": 1520.10, 
+        "penduduk": 9540, 
+        "batas": "Utara: Mimika Baru, Selatan: Laut Arafuru, Timur: Mimika Timur Jauh, Barat: Wania",
+        "deskripsi": "Berpusat di kawasan pesisir muara sungai, Mimika Timur didominasi oleh kebudayaan Kamoro dan potensi perikanan laut di Pelabuhan Poumako."
+    },
+    {
+        "id": 8, 
+        "name": "Mimika Tengah", 
+        "luas": 2150.30, 
+        "penduduk": 6230, 
+        "batas": "Utara: Iwaka, Selatan: Laut Arafuru, Timur: Wania, Barat: Mimika Barat",
+        "deskripsi": "Distrik pesisir dengan hamparan hutan mangrove yang rimbun, mengandalkan transportasi perahu motor sungai sebagai urat nadi konektivitas."
+    },
+    {
+        "id": 9, 
+        "name": "Mimika Barat", 
+        "luas": 2750.00, 
+        "penduduk": 4200, 
+        "batas": "Utara: Kabupaten Deiyai, Selatan: Laut Arafuru, Timur: Mimika Tengah, Barat: Mimika Barat Tengah",
+        "deskripsi": "Distrik pesisir bagian barat dengan pusat administrasi bersejarah di Kokonao, kaya akan potensi laut dan kelapa."
+    },
+    {
+        "id": 10, 
+        "name": "Agimuga", 
+        "luas": 3120.45, 
+        "penduduk": 3150, 
+        "batas": "Utara: Kabupaten Puncak, Selatan: Mimika Timur Jauh, Timur: Jita, Barat: Tembagapura",
+        "deskripsi": "Agimuga merupakan dataran rendah pedalaman yang subur dengan potensi perkebunan sagu dan kopi robusta alami."
+    },
+    {
+        "id": 11, 
+        "name": "Jila", 
+        "luas": 1820.00, 
+        "penduduk": 2800, 
+        "batas": "Utara: Kabupaten Puncak, Selatan: Agimuga, Timur: Alama, Barat: Tembagapura",
+        "deskripsi": "Jila terletak di punggung pegunungan tengah Papua, memiliki panorama alam lereng tebing yang menakjubkan."
+    },
+    {
+        "id": 12, 
+        "name": "Jita", 
+        "luas": 1350.00, 
+        "penduduk": 3200, 
+        "batas": "Utara: Distrik Agimuga, Selatan: Laut Arafuru, Timur: Kabupaten Asmat, Barat: Mimika Timur Jauh",
+        "deskripsi": "Berbatasan langsung dengan Asmat, Jita didominasi lanskap dataran basah berlumpur yang kaya akan hasil tangkapan kepiting bakau."
+    },
+    {
+        "id": 13, 
+        "name": "Mimika Timur Jauh", 
+        "luas": 2050.00, 
+        "penduduk": 4500, 
+        "batas": "Utara: Distrik Agimuga, Selatan: Laut Arafuru, Timur: Distrik Jita, Barat: Distrik Mimika Timur",
+        "deskripsi": "Membentang di garis pantai timur Mimika, distrik ini menjadi sentra komoditas perikanan tangkap tradisional nelayan lokal."
+    },
+    {
+        "id": 14, 
+        "name": "Mimika Barat Jauh", 
+        "luas": 3450.00, 
+        "penduduk": 2100, 
+        "batas": "Utara: Kabupaten Kaimana, Selatan: Laut Arafuru, Timur: Distrik Mimika Barat Tengah, Barat: Kabupaten Kaimana",
+        "deskripsi": "Distrik terluar bagian barat Mimika yang berbatasan langsung dengan Kaimana, didominasi kawasan rawa-rawa hutan basah."
+    },
+    {
+        "id": 15, 
+        "name": "Mimika Barat Tengah", 
+        "luas": 2850.00, 
+        "penduduk": 3800, 
+        "batas": "Utara: Kabupaten Deiyai, Selatan: Laut Arafuru, Timur: Distrik Mimika Barat, Barat: Distrik Mimika Barat Jauh",
+        "deskripsi": "Menghubungkan wilayah barat tengah pantai Mimika, ditopang oleh ekosistem sungai dan laut yang belum terjamah polusi."
+    },
+    {
+        "id": 16, 
+        "name": "Amar", 
+        "luas": 1250.00, 
+        "penduduk": 2950, 
+        "batas": "Utara: Distrik Mimika Barat, Selatan: Laut Arafuru, Timur: Distrik Mimika Tengah, Barat: Distrik Mimika Barat Tengah",
+        "deskripsi": "Distrik pesisir baru yang diproyeksikan Bappeda menjadi sentra budidaya perikanan laut terpadu masa depan."
+    },
+    {
+        "id": 17, 
+        "name": "Hoya", 
+        "luas": 980.00, 
+        "penduduk": 1500, 
+        "batas": "Utara: Kabupaten Nduga, Selatan: Distrik Tembagapura, Timur: Distrik Jila, Barat: Kabupaten Puncak",
+        "deskripsi": "Lembah terisolasi indah di kaki pegunungan bersalju, menyajikan potensi pertanian buah dataran tinggi yang khas."
+    },
+    {
+        "id": 18, 
+        "name": "Alama", 
+        "luas": 1520.80, 
+        "penduduk": 1980, 
+        "batas": "Utara: Kabupaten Nduga, Selatan: Distrik Agimuga, Timur: Kabupaten Asmat, Barat: Distrik Jila",
+        "deskripsi": "Kawasan paling timur pegunungan Mimika yang menyajikan panorama keindahan alam liar berselimut kabut awan putih tebal."
+    }
+]
+
+def seed_wilayah(db: Session) -> dict:
+    """
+    [GRASP - INFORMATION EXPERT]
+    Modul Seeder Kewilayahan Kabupaten Mimika.
+    Menjamin data 18 Distrik dan DistrictProfiles terinisialisasi secara rapi dan terelasi kuat.
+    """
+    stats = {"districts_inserted": 0, "profiles_inserted": 0}
+    
+    for d in WILAYAH_DATA:
+        # 1. Pengecekan Idempotensi Distrik [cite: DISTRICT_MAP]
+        district = db.query(models.District).filter(models.District.id == d["id"]).first()
+        if not district:
+            district = models.District(
+                id=d["id"],
+                name=d["name"]
+            )
+            db.add(district)
+            stats["districts_inserted"] += 1
+            
+        db.flush() # Flush agar ID District dapat diproses oleh relasi Profile di bawahnya
+
+        # 2. Pengecekan Idempotensi Profil Distrik [cite: MOCK_DISTRICT_DRILLDOWN]
+        profile = db.query(models.DistrictProfile).filter(models.DistrictProfile.district_id == d["id"]).first()
+        if not profile:
+            new_profile = models.DistrictProfile(
+                district_id=d["id"],
+                luas_wilayah=d["luas"],
+                jumlah_penduduk=d["penduduk"],
+                batas_wilayah=d["batas"],
+                deskripsi=d["deskripsi"],
+                # Seeding visual foto representatif untuk Theater Mode Galeri di frontend
+                images=[
+                    f"https://picsum.photos/seed/dist{d['id']}a/800/450",
+                    f"https://picsum.photos/seed/dist{d['id']}b/800/450"
+                ]
+            )
+            db.add(new_profile)
+            stats["profiles_inserted"] += 1
+            
+    db.commit()
+    return stats
 
 --- FILE: app\db\session.py ---
 import os
@@ -3919,4 +4482,102 @@ if __name__ == "__main__":
     main()
 
 --- FILE: seed.py ---
+# seed.py
+import os
+import sys
+import argparse
+from sqlalchemy.orm import Session
 
+# Menjamin direktori root terdaftar di dalam sys.path Python
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from app.db.session import SessionLocal
+from app.db.seeders import seed_users, seed_wilayah, seed_assets, seed_datasets
+
+def main():
+    parser = argparse.ArgumentParser(description="Mimika DataHub - Modular Seeding Engine CLI")
+    parser.add_argument(
+        "--module", 
+        type=str, 
+        choices=["users", "wilayah", "aset", "dataset", "all"], 
+        default="all",
+        help="Pilih modul spesifik yang ingin di-seed atau jalankan 'all' untuk menyuntikkan seluruh database."
+    )
+    
+    args = parser.parse_args()
+    
+    # 1. Inisialisasi Sesi Basis Data
+    db: Session = SessionLocal()
+    print("\n" + "="*60)
+    print("🚀 MIMIKA DATAHUB - MODULAR SEEDER ENGINE ACTIVE")
+    print("="*60)
+    print(f"[Core] Membuka koneksi basis data. Menargetkan modul: '{args.module.upper()}'\n")
+
+    try:
+        # ====================================================================
+        # PILIHAN A: JALANKAN SEMUA SEEDER (BERDASARKAN URUTAN DEPENDENSI FK) [1, 2, 10]
+        # ====================================================================
+        if args.module == "all":
+            print("[Step 1/4] Mengeksekusi seeder akun pengguna & OPD...")
+            stats_users = seed_users(db)
+            print(f"👉 Hasil: {stats_users['sources_inserted']} OPD & {stats_users['users_inserted']} Akun Pengguna berhasil diproses.\n")
+
+            print("[Step 2/4] Mengeksekusi seeder wilayah administrasi & profil...")
+            stats_wilayah = seed_wilayah(db)
+            print(f"👉 Hasil: {stats_wilayah['districts_inserted']} Distrik & {stats_wilayah['profiles_inserted']} Profil Wilayah berhasil diproses.\n")
+
+            print("[Step 3/4] Mengeksekusi seeder kategori & koordinat aset fisik...")
+            stats_assets = seed_assets(db)
+            print(f"👉 Hasil: {stats_assets['categories_inserted']} Kategori Aset & {stats_assets['assets_inserted']} Titik Koordinat berhasil diproses.\n")
+
+            print("[Step 4/4] Mengeksekusi seeder data sektoral & kalkulasi cache spasial...")
+            stats_datasets = seed_datasets(db)
+            print(f"👉 Hasil: {stats_datasets['datasets_inserted']} Dataset Sektoral & {stats_datasets['rows_inserted']} DataRow berhasil diproses.")
+            if stats_datasets["cache_warmed"]:
+                print("👉 Status Cache: Berhasil dihitung dan dipanaskan (SpatialCache Warmed Up).\n")
+
+            print("="*60)
+            print("🎉 SEEDING SELURUH DATABASE BERHASIL DISELESAIKAN!")
+            print("="*60)
+            print("Silakan login menggunakan akun terdaftar:")
+            print("1. Username: admin  | Password: Mimika123! (Super Admin Bappeda)")
+            print("2. Username: dinkes | Password: Mimika123! (Operator Dinas Kesehatan)")
+            print("3. Username: brida  | Password: Mimika123! (Operator BRIDA)")
+            print("="*60 + "\n")
+
+        # ====================================================================
+        # PILIHAN B: JALANKAN MODUL SPESIFIK SECARA TERISOLASI
+        # ====================================================================
+        elif args.module == "users":
+            print("[Modular] Menjalankan Seeder Pengguna & OPD...")
+            stats = seed_users(db)
+            print(f"👉 Sukses menyisipkan {stats['sources_inserted']} OPD & {stats['users_inserted']} Akun.")
+            
+        elif args.module == "wilayah":
+            print("[Modular] Menjalankan Seeder Spasial Wilayah...")
+            stats = seed_wilayah(db)
+            print(f"👉 Sukses menyisipkan {stats['districts_inserted']} Distrik & {stats['profiles_inserted']} Profil.")
+            
+        elif args.module == "aset":
+            print("[Modular] Menjalankan Seeder Aset Geotagging...")
+            stats = seed_assets(db)
+            print(f"👉 Sukses menyisipkan {stats['categories_inserted']} Kategori Aset & {stats['assets_inserted']} Titik Koordinat.")
+            
+        elif args.module == "dataset":
+            print("[Modular] Menjalankan Seeder Dataset & Caching...")
+            stats = seed_datasets(db)
+            print(f"👉 Sukses menyisipkan {stats['datasets_inserted']} Dataset & {stats['rows_inserted']} DataRow.")
+            if stats["cache_warmed"]:
+                print("👉 Database cache spasial 'stunting' berhasil dipanaskan.")
+
+    except Exception as e:
+        db.rollback()
+        print("\n❌ [Fatal Error] Terjadi kegagalan saat proses seeding berlangsung!")
+        print(f"Detail kesalahan: {str(e)}")
+        sys.exit(1)
+    finally:
+        db.close()
+        print("[Core] Koneksi basis data berhasil ditutup dengan aman.\n")
+
+if __name__ == "__main__":
+    main()

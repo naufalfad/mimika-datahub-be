@@ -126,7 +126,7 @@ class AtlasService:
         return {
             "title": indicator_key.replace("_", " ").title(),
             "unit": "-",
-            "description": "Indikator pembangunan sektoral Kabupaten Mimika.",
+            "description": "Indikator pembangunan sektoral Pemerintah Daerah.",
             "color_scheme": default_color,
             "direction": guessed_direction  # [3]
         }

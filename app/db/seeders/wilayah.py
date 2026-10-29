@@ -12,7 +12,7 @@ WILAYAH_DATA = [
         "luas": 2216.00, 
         "penduduk": 142519, 
         "batas": "Utara: Kuala Kencana, Selatan: Wania, Timur: Mimika Timur, Barat: Iwaka",
-        "deskripsi": "Distrik Mimika Baru adalah pusat administrasi pemerintahan dan episentrum ekonomi utama Kabupaten Mimika. Menghadapi tantangan urbanisasi cepat, distrik ini menjadi wilayah terpadat."
+        "deskripsi": "Distrik Mimika Baru adalah pusat administrasi pemerintahan dan episentrum ekonomi utama Pemerintah Daerah. Menghadapi tantangan urbanisasi cepat, distrik ini menjadi wilayah terpadat."
     },
     {
         "id": 2, 
@@ -27,8 +27,8 @@ WILAYAH_DATA = [
         "name": "Tembagapura", 
         "luas": 2586.88, 
         "penduduk": 22120, 
-        "batas": "Utara: Kabupaten Puncak, Selatan: Kuala Kencana, Timur: Agimuga, Barat: Jila",
-        "deskripsi": "Distrik dataran tinggi pegunungan Mimika yang menampung area operasional pertambangan emas dan tembaga utama nasional."
+        "batas": "Utara: Kabupaten Perbatasan Pegunungan, Selatan: Kuala Kencana, Timur: Agimuga, Barat: Jila",
+        "deskripsi": "Distrik dataran tinggi pegunungan daerah yang menampung area operasional pertambangan emas dan tembaga utama nasional."
     },
     {
         "id": 4, 
@@ -36,7 +36,7 @@ WILAYAH_DATA = [
         "luas": 310.20, 
         "penduduk": 55210, 
         "batas": "Utara: Mimika Baru, Selatan: Laut Arafuru, Timur: Mimika Timur, Barat: Mimika Tengah",
-        "deskripsi": "Wania berkembang pesat sebagai wilayah penyangga kota Timika dengan basis komoditas pertanian dan peternakan lokal."
+        "deskripsi": "Wania berkembang pesat sebagai wilayah penyangga kota dengan basis komoditas pertanian dan peternakan lokal."
     },
     {
         "id": 5, 
@@ -44,7 +44,7 @@ WILAYAH_DATA = [
         "luas": 785.40, 
         "penduduk": 11450, 
         "batas": "Utara: Tembagapura, Selatan: Mimika Tengah, Timur: Kuala Kencana, Barat: Mimika Barat",
-        "deskripsi": " iwaka dilalui oleh jalur poros Trans Papua, menyimpan potensi ekowisata alam dan perkebunan kelapa sawit yang subur."
+        "deskripsi": " iwaka dilalui oleh jalur poros Poros Utama Nasional, menyimpan potensi ekowisata alam dan perkebunan kelapa sawit yang subur."
     },
     {
         "id": 6, 
@@ -75,7 +75,7 @@ WILAYAH_DATA = [
         "name": "Mimika Barat", 
         "luas": 2750.00, 
         "penduduk": 4200, 
-        "batas": "Utara: Kabupaten Deiyai, Selatan: Laut Arafuru, Timur: Mimika Tengah, Barat: Mimika Barat Tengah",
+        "batas": "Utara: Kabupaten Perbatasan Utara, Selatan: Laut Arafuru, Timur: Mimika Tengah, Barat: Mimika Barat Tengah",
         "deskripsi": "Distrik pesisir bagian barat dengan pusat administrasi bersejarah di Kokonao, kaya akan potensi laut dan kelapa."
     },
     {
@@ -83,7 +83,7 @@ WILAYAH_DATA = [
         "name": "Agimuga", 
         "luas": 3120.45, 
         "penduduk": 3150, 
-        "batas": "Utara: Kabupaten Puncak, Selatan: Mimika Timur Jauh, Timur: Jita, Barat: Tembagapura",
+        "batas": "Utara: Kabupaten Perbatasan Pegunungan, Selatan: Mimika Timur Jauh, Timur: Jita, Barat: Tembagapura",
         "deskripsi": "Agimuga merupakan dataran rendah pedalaman yang subur dengan potensi perkebunan sagu dan kopi robusta alami."
     },
     {
@@ -91,15 +91,15 @@ WILAYAH_DATA = [
         "name": "Jila", 
         "luas": 1820.00, 
         "penduduk": 2800, 
-        "batas": "Utara: Kabupaten Puncak, Selatan: Agimuga, Timur: Alama, Barat: Tembagapura",
-        "deskripsi": "Jila terletak di punggung pegunungan tengah Papua, memiliki panorama alam lereng tebing yang menakjubkan."
+        "batas": "Utara: Kabupaten Perbatasan Pegunungan, Selatan: Agimuga, Timur: Alama, Barat: Tembagapura",
+        "deskripsi": "Jila terletak di punggung pegunungan tengah wilayah, memiliki panorama alam lereng tebing yang menakjubkan."
     },
     {
         "id": 12, 
         "name": "Jita", 
         "luas": 1350.00, 
         "penduduk": 3200, 
-        "batas": "Utara: Distrik Agimuga, Selatan: Laut Arafuru, Timur: Kabupaten Asmat, Barat: Mimika Timur Jauh",
+        "batas": "Utara: Distrik Agimuga, Selatan: Laut Arafuru, Timur: Kabupaten Perbatasan Timur, Barat: Mimika Timur Jauh",
         "deskripsi": "Berbatasan langsung dengan Asmat, Jita didominasi lanskap dataran basah berlumpur yang kaya akan hasil tangkapan kepiting bakau."
     },
     {
@@ -108,23 +108,23 @@ WILAYAH_DATA = [
         "luas": 2050.00, 
         "penduduk": 4500, 
         "batas": "Utara: Distrik Agimuga, Selatan: Laut Arafuru, Timur: Distrik Jita, Barat: Distrik Mimika Timur",
-        "deskripsi": "Membentang di garis pantai timur Mimika, distrik ini menjadi sentra komoditas perikanan tangkap tradisional nelayan lokal."
+        "deskripsi": "Membentang di garis pantai timur daerah, distrik ini menjadi sentra komoditas perikanan tangkap tradisional nelayan lokal."
     },
     {
         "id": 14, 
         "name": "Mimika Barat Jauh", 
         "luas": 3450.00, 
         "penduduk": 2100, 
-        "batas": "Utara: Kabupaten Kaimana, Selatan: Laut Arafuru, Timur: Distrik Mimika Barat Tengah, Barat: Kabupaten Kaimana",
-        "deskripsi": "Distrik terluar bagian barat Mimika yang berbatasan langsung dengan Kaimana, didominasi kawasan rawa-rawa hutan basah."
+        "batas": "Utara: Kabupaten Perbatasan Barat, Selatan: Laut Arafuru, Timur: Distrik Mimika Barat Tengah, Barat: Kabupaten Perbatasan Barat",
+        "deskripsi": "Distrik terluar bagian barat daerah yang berbatasan langsung dengan Kaimana, didominasi kawasan rawa-rawa hutan basah."
     },
     {
         "id": 15, 
         "name": "Mimika Barat Tengah", 
         "luas": 2850.00, 
         "penduduk": 3800, 
-        "batas": "Utara: Kabupaten Deiyai, Selatan: Laut Arafuru, Timur: Distrik Mimika Barat, Barat: Distrik Mimika Barat Jauh",
-        "deskripsi": "Menghubungkan wilayah barat tengah pantai Mimika, ditopang oleh ekosistem sungai dan laut yang belum terjamah polusi."
+        "batas": "Utara: Kabupaten Perbatasan Utara, Selatan: Laut Arafuru, Timur: Distrik Mimika Barat, Barat: Distrik Mimika Barat Jauh",
+        "deskripsi": "Menghubungkan wilayah barat tengah pantai daerah, ditopang oleh ekosistem sungai dan laut yang belum terjamah polusi."
     },
     {
         "id": 16, 
@@ -139,7 +139,7 @@ WILAYAH_DATA = [
         "name": "Hoya", 
         "luas": 980.00, 
         "penduduk": 1500, 
-        "batas": "Utara: Kabupaten Nduga, Selatan: Distrik Tembagapura, Timur: Distrik Jila, Barat: Kabupaten Puncak",
+        "batas": "Utara: Kabupaten Nduga, Selatan: Distrik Tembagapura, Timur: Distrik Jila, Barat: Kabupaten Perbatasan Pegunungan",
         "deskripsi": "Lembah terisolasi indah di kaki pegunungan bersalju, menyajikan potensi pertanian buah dataran tinggi yang khas."
     },
     {
@@ -147,15 +147,15 @@ WILAYAH_DATA = [
         "name": "Alama", 
         "luas": 1520.80, 
         "penduduk": 1980, 
-        "batas": "Utara: Kabupaten Nduga, Selatan: Distrik Agimuga, Timur: Kabupaten Asmat, Barat: Distrik Jila",
-        "deskripsi": "Kawasan paling timur pegunungan Mimika yang menyajikan panorama keindahan alam liar berselimut kabut awan putih tebal."
+        "batas": "Utara: Kabupaten Nduga, Selatan: Distrik Agimuga, Timur: Kabupaten Perbatasan Timur, Barat: Distrik Jila",
+        "deskripsi": "Kawasan paling timur pegunungan daerah yang menyajikan panorama keindahan alam liar berselimut kabut awan putih tebal."
     }
 ]
 
 def seed_wilayah(db: Session) -> dict:
     """
     [GRASP - INFORMATION EXPERT]
-    Modul Seeder Kewilayahan Kabupaten Mimika.
+    Modul Seeder Kewilayahan Pemerintah Daerah.
     Menjamin data 18 Distrik dan DistrictProfiles terinisialisasi secara rapi dan terelasi kuat.
     """
     stats = {"districts_inserted": 0, "profiles_inserted": 0}

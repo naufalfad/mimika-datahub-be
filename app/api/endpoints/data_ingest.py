@@ -46,39 +46,19 @@ async def upload_and_process_form(
     structure_type = "tabular" # default
 
     # 2. Validasi Kategori
-    # --- 1. INISIALISASI VARIABEL AWAL (Agar tidak UnboundLocalError) ---
-    headers = []
-    total_inserted = 0
-    total_duplicates = 0
-    empty_rows_count = 0
-    empty_cells_count = 0
-    overall_q_score = 0.0
-    first_dataset_id = 0
-    structure_type = "tabular" # default
-
-    # 2. Validasi Kategori
     category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not category:
         raise HTTPException(status_code=400, detail="Kategori tidak ditemukan")
 
     # 3. Upload Gambar Cover ke Cloudinary
-    # 3. Upload Gambar Cover ke Cloudinary
     try:
         image_bytes = await image.read()
         photo_url, _ = upload_image_to_cloudinary(
             image_bytes, 
-            folder_name="mimika_datahub/user_uploads"
+            folder_name="govdatahub/user_uploads"
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal upload gambar: {str(e)}")
-
-    initial_status = "approved" if current_user.role == "admin" else "pending"
-    filename = file.filename.lower()
-    is_tabular = filename.endswith(('.xlsx', '.xls', '.csv'))
-    is_document = filename.endswith(('.pdf', '.doc', '.docx'))
-
-    if not is_tabular and not is_document:
-        raise HTTPException(status_code=400, detail="Format file tidak didukung.")
 
     initial_status = "approved" if current_user.role == "admin" else "pending"
     filename = file.filename.lower()
@@ -239,8 +219,8 @@ async def upload_and_process_form(
             with open(file_path, "wb") as buffer:
                 buffer.write(contents)
             
-            # 4. Buat URL akses (Ganti domain_vps.com dengan IP/Domain Anda)
-            base_url = "http://127.0.0.1:8000" # Sesuaikan dengan domain backend
+            # 4. Buat URL akses dinamis dari environment
+            base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
             file_url = f"{base_url}/uploads/documents/{unique_filename}"
             
             new_dataset = models.Dataset(
@@ -282,9 +262,7 @@ async def upload_and_process_form(
     return {
         "status": "success",
         "dataset_id": first_dataset_id,
-        "dataset_id": first_dataset_id,
         "headers_found": headers,
-        "message": f"File {filename} berhasil diproses sebagai {structure_type}",
         "message": f"File {filename} berhasil diproses sebagai {structure_type}",
         "stats": {
             "inserted": total_inserted,

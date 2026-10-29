@@ -6,7 +6,7 @@ from passlib.context import CryptContext
 from fastapi import HTTPException, status
 
 # PENTING: Ganti SECRET_KEY dengan string acak yang kuat
-SECRET_KEY = "MIMIKA_DATAHUB_SUPER_SECRET_KEY_123"
+SECRET_KEY = "GOVDATAHUB_SUPER_SECRET_KEY_123"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 1 hari
 

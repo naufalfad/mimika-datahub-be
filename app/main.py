@@ -6,7 +6,7 @@ import os
 from app.api.api_router import api_router
 
 app = FastAPI(
-    title="Mimika DataHub - Versi 1",
+    title="GovDataHub - Versi 1",
     description="Core Backend API with Spatial/GIS Capabilities"
 )
 
@@ -39,4 +39,4 @@ app.include_router(api_router, prefix="/api/v1")
 
 @app.get("/")
 def root():
-    return {"message": "Mimika DataHub API is Running"}
+    return {"message": "GovDataHub API is Running"}

@@ -83,7 +83,7 @@ async def create_asset(
             # Gunakan fungsi multi-upload dari Fase 2
             image_urls = upload_multiple_images_to_cloudinary(
                 file_sources=valid_images, 
-                folder_name="mimika_datahub/assets"
+                folder_name="govdatahub/assets"
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Gagal mengunggah foto aset: {str(e)}")
@@ -143,7 +143,7 @@ async def update_asset(
         try:
             image_urls = upload_multiple_images_to_cloudinary(
                 file_sources=valid_images, 
-                folder_name="mimika_datahub/assets"
+                folder_name="govdatahub/assets"
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Gagal mengunggah foto aset baru: {str(e)}")

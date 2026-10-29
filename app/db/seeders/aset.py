@@ -63,14 +63,14 @@ def seed_assets(db: Session) -> dict:
     # 5. STRUKTUR DATA TITIK ASET FISIK REKAYASA (REAL-COORDINATE MIMIKA) [cite: 10]
     assets_sample = [
         {
-            "name": "RSUD Kabupaten Mimika",
+            "name": "RSUD Pemerintah Daerah",
             "user_id": dinkes_id, 
             "source_id": dinkes_source_id, 
             "district_id": mimika_baru_id, 
             "category_id": 1, # Rumah Sakit
             "lat": -4.5450, 
             "lng": 136.8900, 
-            "description": "Gedung RSUD Utama Kabupaten Mimika, menyajikan pelayanan kesehatan rujukan tingkat pertama, IGD 24 Jam, dan klinik spesialis terpadu.",
+            "description": "Gedung RSUD Utama Pemerintah Daerah, menyajikan pelayanan kesehatan rujukan tingkat pertama, IGD 24 Jam, dan klinik spesialis terpadu.",
             "details": {
                 "Kapasitas Bed": "150 Tempat Tidur", 
                 "Status Akreditasi": "Paripurna", 
@@ -83,7 +83,7 @@ def seed_assets(db: Session) -> dict:
             ]
         },
         {
-            "name": "Puskesmas Timika Baru",
+            "name": "Puskesmas Wilayah Utama",
             "user_id": dinkes_id, 
             "source_id": dinkes_source_id, 
             "district_id": mimika_baru_id, 
@@ -101,14 +101,14 @@ def seed_assets(db: Session) -> dict:
             ]
         },
         {
-            "name": "SMP Negeri 2 Mimika Baru",
+            "name": "SMP Negeri 2 Wilayah Pusat",
             "user_id": admin_id, 
             "source_id": disdik_source_id, 
             "district_id": mimika_baru_id, 
             "category_id": 4, # Gedung Sekolah
             "lat": -4.5350, 
             "lng": 136.8950, 
-            "description": "Fasilitas sarana pendidikan dasar menengah tingkat pertama, di bawah naungan Dinas Pendidikan Kabupaten Mimika.",
+            "description": "Fasilitas sarana pendidikan dasar menengah tingkat pertama, di bawah naungan Dinas Pendidikan Pemerintah Daerah.",
             "details": {
                 "Jumlah Siswa": "450 Siswa", 
                 "Jumlah Guru Aktif": "32 Guru", 
@@ -127,12 +127,12 @@ def seed_assets(db: Session) -> dict:
             "category_id": 5, # Infrastruktur Jembatan
             "lat": -4.5650, 
             "lng": 136.9150, 
-            "description": "Infrastruktur penyeberangan vital yang mengintegrasikan jalan poros utama Distrik Wania dengan pusat kota Timika.",
+            "description": "Infrastruktur penyeberangan vital yang mengintegrasikan jalan poros utama Distrik Wania dengan pusat kota.",
             "details": {
                 "Panjang Bentang": "120 Meter", 
                 "Tahun Selesai": "2024",
                 "Konstruksi Utama": "Rangka Baja Kelas A",
-                "Kontraktor Pelaksana": "PT. Papua Karya Abadi"
+                "Kontraktor Pelaksana": "PT. Karya Abadi Pembangunan"
             },
             "images": [
                 "https://images.unsplash.com/photo-1545569341-9eb8b30979d9?auto=format&fit=crop&w=800&q=80"

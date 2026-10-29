@@ -12,7 +12,7 @@ SOURCES_DATA = [
     {"id": 3, "name": "Dinas Pendidikan", "type": "opd"},
     {"id": 4, "name": "Dinas PUPR", "type": "opd"},
     {"id": 5, "name": "Dinas Sosial", "type": "opd"},
-    {"id": 6, "name": "BPS Mimika", "type": "bps"}
+    {"id": 6, "name": "BPS Daerah", "type": "bps"}
 ]
 
 # ============================================================================
@@ -21,21 +21,21 @@ SOURCES_DATA = [
 USERS_DATA = [
     {
         "username": "admin",
-        "email": "admin@mimikakab.go.id",
+        "email": "admin@pemda.go.id",
         "full_name": "Bappeda Administrator",
         "role": "admin",
         "source_id": 1  # Terikat ke BAPPEDA
     },
     {
         "username": "brida",
-        "email": "operator.brida@mimikakab.go.id",
-        "full_name": "Operator BRIDA Mimika",
+        "email": "operator.brida@pemda.go.id",
+        "full_name": "Operator BRIDA",
         "role": "brida",
         "source_id": 1  # Terikat ke BAPPEDA
     },
     {
         "username": "dinkes",
-        "email": "operator.dinkes@mimikakab.go.id",
+        "email": "operator.dinkes@pemda.go.id",
         "full_name": "Operator Dinas Kesehatan",
         "role": "user",  # Peran operator umum OPD (Dinkes) [cite: 1]
         "source_id": 2  # Terikat ke Dinas Kesehatan

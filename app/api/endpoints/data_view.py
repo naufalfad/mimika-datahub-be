@@ -7,7 +7,8 @@ from typing import List, Optional
 from fastapi.responses import StreamingResponse
 from app.services.export_engine import ExportEngine
 from app.api import deps
-from sqlalchemy import or_
+from sqlalchemy import or_, func, extract
+from datetime import datetime
 
 import csv
 import io
@@ -88,7 +89,7 @@ def export_dataset(dataset_id: int, db: Session = Depends(get_db)):
     return StreamingResponse(
         file_obj,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=mimika_data_clean_{dataset_id}.xlsx"}
+        headers={"Content-Disposition": f"attachment; filename=govdatahub_data_clean_{dataset_id}.xlsx"}
     )
 
 @router.get("/my-datasets", response_model=List[schemas.DatasetOut])

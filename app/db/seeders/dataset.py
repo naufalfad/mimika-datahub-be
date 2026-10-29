@@ -49,7 +49,7 @@ def seed_datasets(db: Session) -> dict:
     sektoral_id = source_type_sektoral.id if source_type_sektoral else 1
 
     # 2. SEED DATASET METADATA (IDEMPOTENT CHECK) [cite: 2]
-    dataset_title = "Prevalensi Stunting Mimika 2025"
+    dataset_title = "Prevalensi Stunting Daerah 2025"
     existing_dataset = db.query(models.Dataset).filter(models.Dataset.title == dataset_title).first()
 
     if not existing_dataset:
@@ -63,7 +63,7 @@ def seed_datasets(db: Session) -> dict:
             district_id=None,  # Level Kabupaten (Multi-Spatial mapping)
             year=2025,
             period="Tahunan",
-            description="Laporan data prevalensi stunting balita per distrik di wilayah Kabupaten Mimika tahun anggaran 2025.",
+            description="Laporan data prevalensi stunting balita per distrik di wilayah Pemerintah Daerah tahun anggaran 2025.",
             total_rows=18,
             quality_score=100.0,
             headers=["distrik", "stunting"],

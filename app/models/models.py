@@ -5,7 +5,7 @@ from app.db.base import Base
 import datetime
 
 class District(Base):
-    """Tabel Master Distrik (Wilayah Administratif Kabupaten Mimika)"""
+    """Tabel Master Distrik (Wilayah Administratif Pemerintah Daerah)"""
     __tablename__ = "districts"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True, nullable=False)

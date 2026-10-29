@@ -101,7 +101,7 @@ def get_latest_datasets_per_category(db: Session = Depends(get_db)):
     # 3. Eksekusi query: Ambil urutan 1 sampai 5 per kategori
     # Kita batasi rn <= 5 sesuai permintaan awal Anda
     results = db.query(dataset_alias).filter(
-        subquery.c.rn <= 1
+        subquery.c.rn <= 5
     ).all()
 
     # 4. Kelompokkan data agar Frontend mudah memakainya
@@ -134,7 +134,7 @@ def get_latest_datasets_per_category(db: Session = Depends(get_db)):
             # Data dari relasi Source (owner)
             "source_id": ds.source_id,
             "source_name": ds.owner.name if ds.owner else "Unknown",
-            "source_type": ds.category.name if ds.category else "Unknown", # Misalnya: 'opd', 'bps', dll
+            "source_type": ds.sourceType.name if ds.sourceType else (ds.owner.type if ds.owner and ds.owner.type else "Unknown"),
         })
 
     return grouped_data
