@@ -5,6 +5,7 @@ uvicorn[standard]
 # Database & Migration
 sqlalchemy
 psycopg2-binary
+psycopg[binary]
 alembic
 
 # Data Processing (Cleaning Engine)
