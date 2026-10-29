@@ -199,10 +199,13 @@ def get_survey_detail(survey_id: int, db: Session = Depends(get_db)):
 @router.get("/export/{survey_id}")
 def export_survey_results(
     survey_id: int,
-    format: str = Query("xlsx", enum=["xlsx", "csv"]),
+    format: str = Query("xlsx"),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(deps.get_current_user)
 ):
+    if format not in ["xlsx", "csv"]:
+        raise HTTPException(status_code=400, detail="Format harus berupa xlsx atau csv")
+
     # 1. Ambil data survey untuk mendapatkan teks pertanyaan (headers)
     survey = db.query(models.Survey).filter(models.Survey.id == survey_id).first()
     if not survey:
